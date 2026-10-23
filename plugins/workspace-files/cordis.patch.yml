@@ -1,0 +1,9 @@
+# Workspace files editor bundle patch.
+#
+# Host: ExplorerFsService (Typert `explorerFs` RPC).
+# Client: discovered via `dsh.client` + exports["./client"].
+- insert:
+    - id: dsh-workspace-enhanced
+      name: 'dsh-workspace-enhanced'
+      config:
+        openLinksInEditor: true

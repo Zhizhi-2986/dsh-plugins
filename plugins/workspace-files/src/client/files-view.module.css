@@ -1,0 +1,66 @@
+/* Full-bleed host for the Files conversation view.
+ * Root carries data-conversation-composer-overlay so ConversationRoot
+ * stretches .viewArea. Shell is position:relative + height:100% with an
+ * absolute fill child so we still paint if an ancestor flex rule misfires. */
+
+.shell {
+  position: relative;
+  height: 100%;
+  min-height: 0;
+  width: 100%;
+  overflow: hidden;
+}
+
+.filesView {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  overflow: hidden;
+  min-height: 0;
+  width: 100%;
+  box-sizing: border-box;
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-label-primary);
+}
+
+.treeCol {
+  position: relative;
+  flex-shrink: 0;
+  min-width: 160px;
+  max-width: 70%;
+  min-height: 0;
+  border-right: 1px solid var(--dsw-alias-border-l2);
+  background: var(--dsw-alias-bg-layer-2);
+  overflow: hidden;
+}
+
+.treeResize {
+  position: absolute;
+  top: 0;
+  right: -3px;
+  z-index: 2;
+  width: 6px;
+  height: 100%;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.treeResize:hover,
+.treeResize:active {
+  background: color-mix(in srgb, var(--dsw-alias-brand-primary, #4c8bf5) 35%, transparent);
+}
+
+.editorCol {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.crash {
+  padding: 16px;
+  color: var(--dsw-alias-label-danger, #c62828);
+  font-size: 13px;
+}
