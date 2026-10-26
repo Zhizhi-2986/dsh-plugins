@@ -16,6 +16,7 @@ const FsEntry = z.object({ name: z.string(), path: z.string(), kind: z.enum(['fi
 const ListOk = z.object({ ok: z.literal(true), entries: z.array(FsEntry) })
 const ReadOk = z.object({ ok: z.literal(true), content: z.string(), version: z.string() })
 const WriteOk = z.object({ ok: z.literal(true), version: z.string() })
+const CreateFileOk = z.object({ ok: z.literal(true), path: z.string(), version: z.string() })
 const SearchOptions = z.object({
   caseSensitive: z.boolean().optional(),
   regex: z.boolean().optional(),
@@ -26,8 +27,9 @@ const SearchOptions = z.object({
 const SearchOk = z.object({
   ok: z.literal(true),
   results: z.array(z.object({ path: z.string(), line: z.number().int().positive(), snippet: z.string() })),
+  truncated: z.boolean().optional(),
 })
-const QuickOpenOk = z.object({ ok: z.literal(true), results: z.array(z.string()) })
+const QuickOpenOk = z.object({ ok: z.literal(true), results: z.array(z.string()), truncated: z.boolean().optional() })
 
 function jsonParam(name: string, schema: z.ZodType = Str, typeName = 'String') {
   return {
@@ -82,12 +84,16 @@ export const TYPERT = {
   model: { services: [], events: [], objects: [] },
   invocations: [
     invocation('getRoot', [], resultCodec(z.union([RootOk, FailResult]), 'RootResult')),
-    invocation('list', [jsonParam('path')], resultCodec(z.union([ListOk, FailResult]), 'ListResult'), true),
-    invocation('read', [jsonParam('path')], resultCodec(z.union([ReadOk, FailResult]), 'ReadResult'), true),
+    invocation('list', [jsonParam('path', Str.max(1024))], resultCodec(z.union([ListOk, FailResult]), 'ListResult'), true),
+    invocation('read', [jsonParam('path', Str.max(1024))], resultCodec(z.union([ReadOk, FailResult]), 'ReadResult'), true),
     invocation('quickOpen', [jsonParam('query', Str.max(256))], resultCodec(z.union([QuickOpenOk, FailResult]), 'QuickOpenResult'), true),
     invocation('search', [jsonParam('query', Str.max(512)), jsonParam('options', SearchOptions, 'WorkspaceSearchOptions')], resultCodec(z.union([SearchOk, FailResult]), 'SearchResult'), true),
+    invocation('createFile', [
+      jsonParam('path', Str.max(1024)),
+      jsonParam('content', Str.max(MAX_FILE_BYTES)),
+    ], resultCodec(z.union([CreateFileOk, FailResult]), 'CreateFileResult'), true),
     invocation('write', [
-      jsonParam('path'),
+      jsonParam('path', Str.max(1024)),
       jsonParam('content', Str.max(MAX_FILE_BYTES)),
       jsonParam('expectedVersion'),
     ], resultCodec(z.union([WriteOk, FailResult]), 'WriteResult'), true),

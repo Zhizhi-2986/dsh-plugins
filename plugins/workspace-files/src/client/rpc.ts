@@ -10,6 +10,7 @@ import {
   EXPLORER_FS_SERVICE,
   type FailResult,
   type FsEntry,
+  type CreateFileOk,
   type ListOk,
   type ReadOk,
   type RootOk,
@@ -33,6 +34,7 @@ const FsEntrySchema = z.object({
 const ListOkSchema = z.object({ ok: z.literal(true), entries: z.array(FsEntrySchema) })
 const ReadOkSchema = z.object({ ok: z.literal(true), content: z.string(), version: z.string() })
 const WriteOkSchema = z.object({ ok: z.literal(true), version: z.string() })
+const CreateFileOkSchema = z.object({ ok: z.literal(true), path: z.string(), version: z.string() })
 const SearchOptionsSchema = z.object({
   caseSensitive: z.boolean().optional(),
   regex: z.boolean().optional(),
@@ -45,11 +47,12 @@ const SearchOkSchema = z.object({
   results: z.array(z.object({ path: z.string(), line: z.number().int().positive(), snippet: z.string() })),
   truncated: z.boolean().optional(),
 })
-const QuickOpenOkSchema = z.object({ ok: z.literal(true), results: z.array(z.string()) })
+const QuickOpenOkSchema = z.object({ ok: z.literal(true), results: z.array(z.string()), truncated: z.boolean().optional() })
 const RootResultSchema = z.union([RootOkSchema, FailResultSchema])
 const ListResultSchema = z.union([ListOkSchema, FailResultSchema])
 const ReadResultSchema = z.union([ReadOkSchema, FailResultSchema])
 const WriteResultSchema = z.union([WriteOkSchema, FailResultSchema])
+const CreateFileResultSchema = z.union([CreateFileOkSchema, FailResultSchema])
 const SearchResultSchema = z.union([SearchOkSchema, FailResultSchema])
 const QuickOpenResultSchema = z.union([QuickOpenOkSchema, FailResultSchema])
 
@@ -108,11 +111,12 @@ export const TYPERT_REMOTE: TypertRemoteContribution = {
   package: PKG,
   descriptors: [
     invocation('getRoot', [], resultCodec(RootResultSchema, 'RootResult')),
-    invocation('list', [strParam('path')], resultCodec(ListResultSchema, 'ListResult'), true),
-    invocation('read', [strParam('path')], resultCodec(ReadResultSchema, 'ReadResult'), true),
+    invocation('list', [strParam('path', Str.max(1024))], resultCodec(ListResultSchema, 'ListResult'), true),
+    invocation('read', [strParam('path', Str.max(1024))], resultCodec(ReadResultSchema, 'ReadResult'), true),
     invocation('search', [strParam('query', Str.max(512)), typedParam('options', SearchOptionsSchema, 'WorkspaceSearchOptions')], resultCodec(SearchResultSchema, 'SearchResult'), true),
     invocation('quickOpen', [strParam('query', Str.max(256))], resultCodec(QuickOpenResultSchema, 'QuickOpenResult'), true),
-    invocation('write', [strParam('path'), strParam('content', Str.max(2 * 1024 * 1024)), strParam('expectedVersion')], resultCodec(WriteResultSchema, 'WriteResult'), true),
+    invocation('createFile', [strParam('path', Str.max(1024)), strParam('content', Str.max(2 * 1024 * 1024))], resultCodec(CreateFileResultSchema, 'CreateFileResult'), true),
+    invocation('write', [strParam('path', Str.max(1024)), strParam('content', Str.max(2 * 1024 * 1024)), strParam('expectedVersion')], resultCodec(WriteResultSchema, 'WriteResult'), true),
   ],
 }
 
@@ -128,6 +132,7 @@ export interface ExplorerFsRemote {
   read(sessionId: string, path: string, signal?: AbortSignal): Promise<RemoteResult<ReadOk | FailResult>>
   search(sessionId: string, query: string, options: WorkspaceSearchOptions, signal?: AbortSignal): Promise<RemoteResult<SearchOk | FailResult>>
   quickOpen(sessionId: string, query: string, signal?: AbortSignal): Promise<RemoteResult<QuickOpenOk | FailResult>>
+  createFile(sessionId: string, path: string, content: string, signal?: AbortSignal): Promise<RemoteResult<CreateFileOk | FailResult>>
   write(sessionId: string, path: string, content: string, expectedVersion: string, signal?: AbortSignal): Promise<RemoteResult<WriteOk | FailResult>>
 }
 
@@ -175,6 +180,9 @@ export function createExplorerApi(ctx: Context, boundSessionId?: string | null) 
     ),
     quickOpen: (query: string, signal?: AbortSignal) => withSession(
       (sessionId) => unwrap(remote().quickOpen(sessionId, query, signal)),
+    ),
+    createFile: (path: string, content: string, signal?: AbortSignal) => withSession(
+      (sessionId) => unwrap(remote().createFile(sessionId, path, content, signal)),
     ),
     write: (path: string, content: string, expectedVersion: string, signal?: AbortSignal) => withSession(
       (sessionId) => unwrap(remote().write(sessionId, path, content, expectedVersion, signal)),

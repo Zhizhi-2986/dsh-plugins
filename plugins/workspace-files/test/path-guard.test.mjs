@@ -5,8 +5,11 @@ import { guardPath, normalizeRelativeInput } from '../src/host/path-guard.ts'
 test('normalizes workspace-relative paths and rejects traversal or absolute paths', () => {
   assert.equal(normalizeRelativeInput('.'), '')
   assert.equal(normalizeRelativeInput('src\\app.ts'), 'src/app.ts')
+  assert.equal(normalizeRelativeInput('docs\\..\\docs\\new.md'), 'docs/new.md')
+  assert.equal(normalizeRelativeInput('\\\\workspace\\secret'), null)
   assert.equal(normalizeRelativeInput('../secret'), null)
   assert.equal(normalizeRelativeInput('/etc/passwd'), null)
+  assert.equal(normalizeRelativeInput(`${'a/'.repeat(2048)}file`), null)
   assert.deepEqual(guardPath('/workspace', 'src/app.ts'), {
     ok: true,
     absolute: '/workspace/src/app.ts',

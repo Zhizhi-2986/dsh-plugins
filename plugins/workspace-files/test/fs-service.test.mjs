@@ -4,9 +4,12 @@ import { ExplorerFsService } from '../lib/host/fs-service.js'
 
 const scope = { sessionId: 'session-1', workspaceRoot: '/workspace' }
 
-function createService({ truncated = false, content: initialContent } = {}) {
-  let content = initialContent ?? 'first'
-  let version = 'v1'
+function createService({ truncated = false, content: initialContent, entrySize = 5, unknownStatSize = false, readFailure, workspaceEntries, extraFiles = {} } = {}) {
+  const files = new Map([
+    ['/workspace/note.txt', { content: initialContent ?? 'first', version: 'v1' }],
+    ...Object.entries(extraFiles).map(([path, content]) => [`/workspace/${path}`, { content, version: 'v1' }]),
+  ])
+  const directories = new Set(['/workspace', '/workspace/docs'])
   const calls = []
   const fs = {
     sandboxMode: 'workspace-write',
@@ -17,20 +20,33 @@ function createService({ truncated = false, content: initialContent } = {}) {
     async lstat(path, options) {
       const absolute = options?.cwd ? `${options.cwd}/${path}` : path
       if (absolute === '/workspace/linked') return { type: 'symlink' }
-      return absolute === '/workspace/note.txt' ? { type: 'file' } : undefined
+      if (files.has(absolute)) return { type: 'file' }
+      return directories.has(absolute) ? { type: 'directory' } : undefined
     },
     async stat(target) {
-      return target.targetKey === '/workspace/note.txt'
-        ? { type: 'file', size: new TextEncoder().encode(content).length, version }
-        : { type: 'directory', version: 'root' }
+      const file = files.get(target.targetKey)
+      if (file !== undefined) {
+        return { type: 'file', ...(unknownStatSize ? {} : { size: new TextEncoder().encode(file.content).length }), version: file.version }
+      }
+      return directories.has(target.targetKey) ? { type: 'directory', version: 'root' } : undefined
     },
-    async readBytes() { return new TextEncoder().encode(content) },
+    async readBytes(target) {
+      if (readFailure !== undefined) throw Object.assign(new Error('mock read failure'), { code: readFailure })
+      return new TextEncoder().encode(files.get(target.targetKey)?.content ?? '')
+    },
     async writeText(target, next, intent, signal, policy) {
       calls.push({ target, next, intent, signal, policy })
-      if (intent.version !== version) throw Object.assign(new Error('stale'), { code: 'FS_STALE_VERSION' })
-      content = next
-      version = 'v2'
-      return { version }
+      if (intent?.kind === 'createIfAbsent') {
+        if (files.has(target.targetKey)) throw Object.assign(new Error('exists'), { code: 'FS_NOT_OBSERVED' })
+        files.set(target.targetKey, { content: next, version: 'v2' })
+        return { version: 'v2' }
+      }
+      const existing = files.get(target.targetKey)
+      if (existing === undefined || intent?.version !== existing.version) {
+        throw Object.assign(new Error('stale'), { code: 'FS_STALE_VERSION' })
+      }
+      files.set(target.targetKey, { content: next, version: 'v2' })
+      return { version: 'v2' }
     },
   }
   const service = Object.create(ExplorerFsService.prototype)
@@ -41,7 +57,9 @@ function createService({ truncated = false, content: initialContent } = {}) {
     workspaceFiles: {
       async list(_scope, path) {
         if (path === '') throw Object.assign(new Error('path is required'), { code: 'gateway/bad-request' })
-        return { path: path === '.' ? '' : path, truncated, entries: [{ name: 'note.txt', type: 'file', size: 5 }] }
+        const entry = { name: 'note.txt', type: 'file' }
+        const entries = workspaceEntries ?? [entrySize === null ? entry : { ...entry, size: entrySize }]
+        return { path: path === '.' ? '' : path, truncated, entries }
       },
     },
   }
@@ -57,6 +75,52 @@ test('reads session-scoped text and saves only with an observed version', async 
   assert.deepEqual(await service.read(scope, 'note.txt'), { ok: true, content: 'second', version: 'v2' })
 })
 
+test('creates text files atomically only when the destination is absent in an existing workspace directory', async () => {
+  const { service, calls } = createService()
+  assert.deepEqual(await service.createFile(scope, 'docs/new.md', '# New'), { ok: true, path: 'docs/new.md', version: 'v2' })
+  assert.deepEqual(calls[0].intent, { kind: 'createIfAbsent' })
+  assert.equal(calls[0].policy.workspaceRoot, '/workspace')
+  assert.equal((await service.createFile(scope, 'docs/new.md', 'overwrite')).code, 'CONFLICT')
+  assert.equal((await service.createFile(scope, 'docs', 'directory collision')).code, 'CONFLICT')
+  assert.equal((await service.createFile(scope, 'linked/new.md', 'symlink parent')).code, 'OUT_OF_ROOT')
+  assert.equal((await service.createFile(scope, 'missing/new.md', 'missing parent')).code, 'NOT_FOUND')
+  assert.equal((await service.createFile(scope, '../outside.md', 'escape')).code, 'OUT_OF_ROOT')
+  assert.equal((await service.createFile(scope, 'docs/invalid.txt', null)).code, 'IO')
+  assert.equal((await service.createFile(scope, 'docs/large.txt', 'x'.repeat(2 * 1024 * 1024 + 1))).code, 'TOO_LARGE')
+  assert.equal(calls.length, 1)
+})
+
+test('returns the canonical workspace-relative path after creating a normalized alias', async () => {
+  const { service } = createService()
+  assert.deepEqual(await service.createFile(scope, 'docs/../docs/new.md', ''), {
+    ok: true, path: 'docs/new.md', version: 'v2',
+  })
+  assert.deepEqual(await service.createFile(scope, 'docs\\..\\docs\\another.md', ''), {
+    ok: true, path: 'docs/another.md', version: 'v2',
+  })
+})
+
+test('fails closed when file creation has no live session policy or sandbox-enforcing filesystem', async () => {
+  const noSession = createService()
+  noSession.service.context.sessions.get = () => undefined
+  assert.equal((await noSession.service.createFile(scope, 'docs/new.md', '')).code, 'NO_SESSION')
+  assert.equal(noSession.calls.length, 0)
+
+  const noSandbox = createService()
+  noSandbox.service.context.fs.sandboxMode = undefined
+  assert.equal((await noSandbox.service.createFile(scope, 'docs/new.md', '')).code, 'SANDBOX_DENIED')
+  assert.equal(noSandbox.calls.length, 0)
+})
+
+test('does not expose unknown local filesystem error details to the Client', async () => {
+  const { service } = createService()
+  service.context.fs.writeText = async () => { throw new Error('permission denied: /Users/alice/private/workspace') }
+  const result = await service.createFile(scope, 'docs/new.md', '')
+  assert.equal(result.code, 'IO')
+  assert.equal(result.message.includes('/Users/alice'), false)
+  assert.equal(result.message.includes('private/workspace'), false)
+})
+
 test('routes Quick Open and workspace search through the session-scoped Host', async () => {
   const { service } = createService()
   const quick = await service.quickOpen(scope, 'note')
@@ -64,6 +128,52 @@ test('routes Quick Open and workspace search through the session-scoped Host', a
   assert.equal(quick.results[0], 'note.txt')
   const search = await service.search(scope, 'first', {})
   assert.deepEqual(search, { ok: true, results: [{ path: 'note.txt', line: 1, snippet: 'first' }] })
+})
+
+test('accounts small opaque files by their observed size so later text matches remain searchable', async () => {
+  const opaquePaths = Array.from({ length: 17 }, (_, index) => `opaque-${index}.txt`)
+  const workspaceEntries = [
+    ...opaquePaths.map((name) => ({ name, type: 'file', size: 1 })),
+    { name: 'match.txt', type: 'file', size: 6 },
+  ]
+  const extraFiles = Object.fromEntries([
+    ...opaquePaths.map((path) => [path, '\0']),
+    ['match.txt', 'needle'],
+  ])
+  const { service } = createService({ workspaceEntries, extraFiles })
+  assert.deepEqual(await service.search(scope, 'needle', {}), {
+    ok: true,
+    results: [{ path: 'match.txt', line: 1, snippet: 'needle' }],
+  })
+})
+
+test('charges bytes actually read when opaque files grow after the directory listing', async () => {
+  const opaquePaths = Array.from({ length: 33 }, (_, index) => `opaque-${index}.txt`)
+  const workspaceEntries = [
+    ...opaquePaths.map((name) => ({ name, type: 'file', size: 1 })),
+    { name: 'match.txt', type: 'file', size: 6 },
+  ]
+  const grownBinary = `\0${'x'.repeat(1024 * 1024 - 1)}`
+  const extraFiles = Object.fromEntries([
+    ...opaquePaths.map((path) => [path, grownBinary]),
+    ['match.txt', 'needle'],
+  ])
+  const { service } = createService({ workspaceEntries, extraFiles })
+  assert.deepEqual(await service.search(scope, 'needle', {}), {
+    ok: true,
+    results: [],
+    truncated: true,
+  })
+})
+
+test('rejects workspace-search glob filters beyond the total character budget', async () => {
+  const { service } = createService()
+  const pattern = 'a'.repeat(256)
+  assert.deepEqual(await service.search(scope, 'needle', { include: [pattern, pattern, pattern] }), {
+    ok: false,
+    code: 'IO',
+    message: 'search request exceeds its input limits',
+  })
 })
 
 test('lists the workspace root using the non-empty path the Host API requires', async () => {
@@ -79,6 +189,21 @@ test('flags a large workspace file as partial instead of failing the search', as
   assert.equal(search.ok, true)
   assert.equal(search.truncated, true)
   assert.deepEqual(search.results, [])
+})
+
+test('propagates oversized-file skips as incomplete search metadata to Client', async () => {
+  const { service } = createService({ entrySize: 2 * 1024 * 1024 })
+  assert.deepEqual(await service.search(scope, 'first', {}), { ok: true, results: [], truncated: true })
+})
+
+test('flags files with missing size metadata when readBytes rejects them as too large', async () => {
+  const { service } = createService({
+    content: 'needle',
+    entrySize: null,
+    unknownStatSize: true,
+    readFailure: 'FS_TOO_LARGE',
+  })
+  assert.deepEqual(await service.search(scope, 'needle', {}), { ok: true, results: [], truncated: true })
 })
 
 test('rejects stale saves without overwriting the unsaved buffer', async () => {

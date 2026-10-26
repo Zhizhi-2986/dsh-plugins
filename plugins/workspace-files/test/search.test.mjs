@@ -55,6 +55,61 @@ test('reports truncation instead of failing when the file limit is reached', asy
   assert.deepEqual(reasons, ['files'])
 })
 
+test('counts glob-filtered files toward the search work limit', async () => {
+  const reasons = []
+  const results = await searchWorkspace(createFiles({
+    'skip-1.tmp': 'irrelevant',
+    'skip-2.tmp': 'irrelevant',
+    'match.md': 'needle',
+  }), scope, '', 'needle', {
+    maxFiles: 1,
+    exclude: ['*.tmp'],
+    onTruncated: (reason) => reasons.push(reason),
+  })
+  assert.deepEqual(results, [])
+  assert.deepEqual(reasons, ['files'])
+})
+
+test('rejects glob filters whose total pattern work exceeds the bounded budget', async () => {
+  const pattern = 'a'.repeat(256)
+  await assert.rejects(
+    searchWorkspace(createFiles({ 'a.md': 'needle' }), scope, '', 'needle', {
+      include: [pattern, pattern, pattern],
+    }),
+    /Glob filter limit/u,
+  )
+})
+
+test('flags files skipped by the per-file byte cap as incomplete search results', async () => {
+  const reasons = []
+  const files = {
+    async list() {
+      return { ok: true, value: { entries: [{ name: 'large.md', type: 'file', size: 2 * 1024 * 1024 }] } }
+    },
+    async read() { throw new Error('oversized file should be skipped before reading') },
+  }
+  const results = await searchWorkspace(files, scope, '', 'needle', {
+    maxFileBytes: 1024 * 1024,
+    onTruncated: (reason) => reasons.push(reason),
+  })
+  assert.deepEqual(results, [])
+  assert.deepEqual(reasons, ['files'])
+})
+
+test('reports truncation when a read exceeds the per-file byte cap despite missing metadata', async () => {
+  const reasons = []
+  const files = {
+    async list() { return { ok: true, value: { entries: [{ name: 'large.md', type: 'file' }] } } },
+    async read() { return { ok: true, value: { text: `needle${'x'.repeat(1024 * 1024)}` } } },
+  }
+  const results = await searchWorkspace(files, scope, '', 'needle', {
+    maxFileBytes: 1024 * 1024,
+    onTruncated: (reason) => reasons.push(reason),
+  })
+  assert.deepEqual(results, [])
+  assert.deepEqual(reasons, ['files'])
+})
+
 test('scans oversized text files up to the line cap and flags partial results', async () => {
   const reasons = []
   const results = await searchWorkspace(createFiles({ 'long.md': 'first\nsecond\nthird' }), scope, '', 'third', {
@@ -74,19 +129,117 @@ test('reports truncation instead of failing when the directory limit is reached'
   assert.deepEqual(reasons, ['directories'])
 })
 
-test('reports truncation when the total byte budget is exhausted', async () => {
+test('charges conservative read bytes when a document is truncated or undecodable', async () => {
   const reasons = []
-  await searchWorkspace(createFiles({ 'a.md': 'needle', 'b.md': 'needle' }), scope, '', 'needle', {
+  const files = {
+    async list() { return { ok: true, value: { entries: [{ name: 'unknown.txt', type: 'file' }] } } },
+    async read() { return { ok: true, value: { content: '', offset: 1, bytesRead: 2000 } } },
+  }
+  await searchWorkspace(files, scope, '', 'needle', {
+    maxTotalBytes: 1000,
+    onTruncated: (reason) => reasons.push(reason),
+  })
+  assert.deepEqual(reasons, ['bytes'])
+})
+
+test('counts oversized read content toward the aggregate scan byte budget', async () => {
+  const reasons = []
+  const reads = []
+  const directories = ['a', 'b', 'c', 'd', 'e']
+  const files = {
+    async list(_scope, path) {
+      return { ok: true, value: { entries: path === ''
+        ? directories.map((name) => ({ name, type: 'directory' }))
+        : [{ name: 'file.md', type: 'file' }] } }
+    },
+    async read(_scope, path) {
+      reads.push(path)
+      return { ok: true, value: { text: 'x'.repeat(1500) } }
+    },
+  }
+  await searchWorkspace(files, scope, '', 'needle', {
+    maxFileBytes: 1024,
+    maxTotalBytes: 2500,
+    onTruncated: (reason) => reasons.push(reason),
+  })
+  assert.equal(reads.length, 2, 'oversized per-file reads still consume aggregate budget')
+  assert.deepEqual(reasons, ['files', 'bytes'])
+})
+
+test('bounds the queued directory frontier and flags skipped subdirectories', async () => {
+  const reasons = []
+  let listCalls = 0
+  const directories = Array.from({ length: 3000 }, (_, index) => `dir-${index}`)
+  const files = {
+    async list(_scope, path) {
+      listCalls += 1
+      return { ok: true, value: { entries: path === ''
+        ? directories.map((name) => ({ name, type: 'directory' }))
+        : [] } }
+    },
+    async read() { return { ok: true, value: { text: '' } } },
+  }
+  await searchWorkspace(files, scope, '', 'needle', {
+    maxDirectories: 2500,
+    onTruncated: (reason) => reasons.push(reason),
+  })
+  assert.equal(listCalls, 2001, 'the root plus at most 2,000 queued directory paths are visited')
+  assert.deepEqual(reasons, ['directories'])
+})
+
+test('bounds the Quick Open directory frontier and reports partial results', async () => {
+  let listCalls = 0
+  let truncated = false
+  const directories = Array.from({ length: 3000 }, (_, index) => `dir-${index}`)
+  const files = {
+    async list(_scope, path) {
+      listCalls += 1
+      return { ok: true, value: { entries: path === ''
+        ? directories.map((name) => ({ name, type: 'directory' }))
+        : [] } }
+    },
+    async read() { return { ok: true, value: { text: '' } } },
+  }
+  await quickOpenWorkspace(files, scope, 'needle', {
+    maxDirectories: 2000,
+    onTruncated: () => { truncated = true },
+  })
+  assert.equal(listCalls, 2000)
+  assert.equal(truncated, true)
+})
+
+test('stops the whole traversal after one file crosses the total byte budget', async () => {
+  const reasons = []
+  const reads = []
+  const directories = ['a', 'b', 'c', 'd', 'e']
+  const files = {
+    async list(_scope, path) {
+      return { ok: true, value: { entries: path === ''
+        ? directories.map((name) => ({ name, type: 'directory' }))
+        : [{ name: 'file.md', type: 'file', size: 1 }] } }
+    },
+    async read(_scope, path) {
+      reads.push(path)
+      return { ok: true, value: { text: 'x' } }
+    },
+  }
+  await searchWorkspace(files, scope, '', 'needle', {
     maxTotalBytes: 1,
     onTruncated: (reason) => reasons.push(reason),
   })
-  assert.ok(reasons.includes('bytes'))
+  assert.equal(reads.length, 2, 'only the file crossing the byte budget may be read beyond it')
+  assert.deepEqual(reasons, ['bytes'])
 })
 
-test('respects the result limit', async () => {
+test('reports incomplete results when the result limit stops the search', async () => {
+  const reasons = []
   const files = createFiles({ 'a.md': 'hit\nhit', 'b.md': 'hit' })
-  const result = await searchWorkspace(files, scope, '', 'hit', { maxResults: 2 })
+  const result = await searchWorkspace(files, scope, '', 'hit', {
+    maxResults: 2,
+    onTruncated: (reason) => reasons.push(reason),
+  })
   assert.equal(result.length, 2)
+  assert.deepEqual(reasons, ['results'])
 })
 
 test('honors an already-aborted signal', async () => {

@@ -4,6 +4,8 @@
 
 import { isAbsolute, normalize, relative, resolve, sep } from 'node:path'
 
+const MAX_WORKSPACE_PATH_LENGTH = 1024
+
 export interface GuardOk {
   readonly ok: true
   /** Absolute path after resolve(root, rel). */
@@ -24,9 +26,11 @@ export type GuardResult = GuardOk | GuardFail
  * Absolute inputs are rejected as INVALID (callers must use relative paths).
  */
 export function normalizeRelativeInput(input: string): string | null {
+  if (input.length > MAX_WORKSPACE_PATH_LENGTH) return null
   if (input === '' || input === '.') return ''
-  if (isAbsolute(input)) return null
-  const normalized = normalize(input).replaceAll('\\', '/')
+  const slashInput = input.replaceAll('\\', '/')
+  if (isAbsolute(slashInput)) return null
+  const normalized = normalize(slashInput).replaceAll('\\', '/')
   if (normalized === '.' ) return ''
   if (normalized.startsWith('../') || normalized === '..') return null
   return normalized.replace(/\/+$/, '')

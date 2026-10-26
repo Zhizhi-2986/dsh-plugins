@@ -72,6 +72,35 @@ export type ExplorerKey =
   | 'quickOpenPlaceholder'
   | 'quickOpenClose'
   | 'quickOpenEmpty'
+  | 'quickOpenPartial'
+  | 'createFile'
+  | 'createFileHint'
+  | 'createFilePath'
+  | 'createFileFailed'
+  | 'createFileAction'
+  | 'creatingFile'
+  | 'expandAllLimitReached'
+  | 'expandAllEntriesOmitted'
+  | 'directoryLoadFailed'
+  | 'cancel'
+  | 'replaceTitle'
+  | 'replaceShort'
+  | 'replaceHint'
+  | 'replaceFind'
+  | 'replaceWith'
+  | 'replacePreviewAction'
+  | 'replacePreviewing'
+  | 'replaceAll'
+  | 'replaceApplying'
+  | 'replaceOccurrences'
+  | 'replaceAcross'
+  | 'replaceFiles'
+  | 'replaceNoMatches'
+  | 'replaceBefore'
+  | 'replaceAfter'
+  | 'replaceSucceeded'
+  | 'replaceFailedCount'
+  | 'replaceFailed'
 
 const zh: Record<ExplorerKey, string> = {
   viewLabel: '文件',
@@ -86,6 +115,9 @@ const zh: Record<ExplorerKey, string> = {
   collapse: '折叠',
   expandAll: '全部展开',
   collapseAll: '全部折叠',
+  expandAllLimitReached: '全部展开已达到目录数或条目数上限；其余内容请按需手动展开。',
+  expandAllEntriesOmitted: '受全部展开预算限制，部分条目未显示。',
+  directoryLoadFailed: '无法加载此目录。',
   readOnly: '当前不可写入设置',
   refresh: '刷新',
   tabClose: '关闭',
@@ -137,6 +169,32 @@ const zh: Record<ExplorerKey, string> = {
   quickOpenPlaceholder: '按名称查找文件（可加 :行号）',
   quickOpenClose: '关闭快速打开',
   quickOpenEmpty: '没有最近文件或匹配文件',
+  quickOpenPartial: 'Quick Open 结果可能不完整；可缩小搜索范围后重试。',
+  createFile: '新建文件',
+  createFileHint: '输入工作区根目录下的相对路径；父目录必须已存在。',
+  createFilePath: '相对工作区根目录的文件路径',
+  createFileFailed: '创建文件失败',
+  createFileAction: '创建',
+  creatingFile: '创建中…',
+  cancel: '取消',
+  replaceTitle: '全局替换',
+  replaceShort: '替换',
+  replaceHint: '按区分大小写的单行字面文本匹配。先预览，再确认写入。',
+  replaceFind: '查找文本',
+  replaceWith: '替换为',
+  replacePreviewAction: '预览替换',
+  replacePreviewing: '正在生成预览…',
+  replaceAll: '全部替换',
+  replaceApplying: '正在替换…',
+  replaceOccurrences: '处匹配',
+  replaceAcross: '，涉及',
+  replaceFiles: '个文件',
+  replaceNoMatches: '没有匹配项',
+  replaceBefore: '替换前',
+  replaceAfter: '替换后',
+  replaceSucceeded: '个文件已完成',
+  replaceFailedCount: '个文件失败',
+  replaceFailed: '全局替换失败',
 }
 
 const en: Record<ExplorerKey, string> = {
@@ -152,6 +210,9 @@ const en: Record<ExplorerKey, string> = {
   collapse: 'Collapse',
   expandAll: 'Expand All',
   collapseAll: 'Collapse All',
+  expandAllLimitReached: 'Expand All reached its folder or entry limit; expand the remaining content manually as needed.',
+  expandAllEntriesOmitted: 'Additional entries are hidden by the Expand All budget.',
+  directoryLoadFailed: 'Could not load this directory.',
   readOnly: 'Settings are read-only right now',
   refresh: 'Refresh',
   tabClose: 'Close',
@@ -203,6 +264,32 @@ const en: Record<ExplorerKey, string> = {
   quickOpenPlaceholder: 'Find a file by name (add :line)',
   quickOpenClose: 'Close Quick Open',
   quickOpenEmpty: 'No recent or matching files',
+  quickOpenPartial: 'Quick Open results may be incomplete; try a narrower query.',
+  createFile: 'New file',
+  createFileHint: 'Enter a path relative to the workspace root. Parent directories must already exist.',
+  createFilePath: 'File path from workspace root',
+  createFileFailed: 'Could not create file',
+  createFileAction: 'Create',
+  creatingFile: 'Creating…',
+  cancel: 'Cancel',
+  replaceTitle: 'Replace in workspace',
+  replaceShort: 'Replace',
+  replaceHint: 'Case-sensitive, single-line literal match. Review the preview before confirming writes.',
+  replaceFind: 'Find text',
+  replaceWith: 'Replace with',
+  replacePreviewAction: 'Preview replacement',
+  replacePreviewing: 'Building preview…',
+  replaceAll: 'Replace all',
+  replaceApplying: 'Replacing…',
+  replaceOccurrences: 'occurrences',
+  replaceAcross: 'across',
+  replaceFiles: 'files',
+  replaceNoMatches: 'No matches found',
+  replaceBefore: 'Before',
+  replaceAfter: 'After',
+  replaceSucceeded: 'files succeeded',
+  replaceFailedCount: 'files failed',
+  replaceFailed: 'Global replacement failed',
 }
 
 export const dictionaries = { zh, en }

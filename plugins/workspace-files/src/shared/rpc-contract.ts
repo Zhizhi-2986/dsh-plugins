@@ -50,6 +50,12 @@ export interface WriteOk {
   readonly version: string
 }
 
+export interface CreateFileOk {
+  readonly ok: true
+  readonly path: string
+  readonly version: string
+}
+
 export interface WorkspaceSearchOptions {
   readonly caseSensitive?: boolean
   readonly regex?: boolean
@@ -74,12 +80,14 @@ export interface SearchOk {
 export interface QuickOpenOk {
   readonly ok: true
   readonly results: readonly string[]
+  readonly truncated?: boolean
 }
 
 export type RootResult = RootOk | FailResult
 export type ListResult = ListOk | FailResult
 export type ReadResult = ReadOk | FailResult
 export type WriteResult = WriteOk | FailResult
+export type CreateFileResult = CreateFileOk | FailResult
 export type SearchResult = SearchOk | FailResult
 export type QuickOpenResult = QuickOpenOk | FailResult
 

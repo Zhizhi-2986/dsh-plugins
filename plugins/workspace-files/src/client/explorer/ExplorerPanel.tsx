@@ -17,20 +17,26 @@ import type { ExplorerApi } from '../rpc.ts'
 import type { FsEntry, WorkspaceSearchMatch } from '../../shared/rpc-contract.ts'
 import { subscribeRootPinned } from '../root-events.ts'
 import type { TabsStore } from '../state/tabs.ts'
+import type { BuffersStore } from '../state/buffers.ts'
 import { useExplorerT } from '../use-explorer-t.ts'
 import {
   CollapseAllIconButton,
   ExpandAllIconButton,
   HiddenFilesToggleIconButton,
+  NewFileIconButton,
   RefreshIconButton,
 } from './ToolbarIcons.tsx'
-import { TreeNode } from './TreeNode.tsx'
+import { CreateFileDialog } from './CreateFileDialog.tsx'
+import { GlobalReplaceDialog } from './GlobalReplaceDialog.tsx'
+import { TreeNode, type TreeAction } from './TreeNode.tsx'
+import { createTreeExpansionBudget } from './tree-expansion.ts'
 import css from './explorer.module.css'
 
 export interface ExplorerPanelProps {
   readonly ctx: ClientContext
   readonly api: ExplorerApi
   readonly tabs: TabsStore
+  readonly buffers: BuffersStore
   readonly onOpenFile: (path: string, line?: number, edit?: boolean) => void
 }
 
@@ -78,14 +84,14 @@ export function ExplorerPanel(props: ExplorerPanelProps): ReactElement {
 }
 
 function ExplorerPanelInner(props: ExplorerPanelProps): ReactElement {
-  const { ctx, api, tabs, onOpenFile } = props
+  const { ctx, api, tabs, buffers, onOpenFile } = props
   const t = useExplorerT(ctx)
   const activePath = useSyncExternalStore(tabs.subscribe, () => tabs.getSnapshot().activePath)
   const [entries, setEntries] = useState<readonly FsEntry[]>([])
   const [error, setError] = useState<string | null>(null)
   const [refreshToken, setRefreshToken] = useState(0)
-  const [expandSignal, setExpandSignal] = useState(0)
-  const [collapseSignal, setCollapseSignal] = useState(0)
+  const [treeAction, setTreeAction] = useState<TreeAction | null>(null)
+  const [expandLimitReached, setExpandLimitReached] = useState(false)
   const [selectedPath, setSelectedPath] = useState<string | null>(null)
   const [rootPath, setRootPath] = useState('')
   const [query, setQuery] = useState('')
@@ -94,12 +100,15 @@ function ExplorerPanelInner(props: ExplorerPanelProps): ReactElement {
   const [matches, setMatches] = useState<readonly WorkspaceSearchMatch[]>([])
   const [partialSearch, setPartialSearch] = useState(false)
   const [showHidden, setShowHidden] = useState(false)
+  const [createOpen, setCreateOpen] = useState(false)
+  const [replaceOpen, setReplaceOpen] = useState(false)
   const [quickOpen, setQuickOpen] = useState(false)
   const [quickQuery, setQuickQuery] = useState('')
   const [quickResults, setQuickResults] = useState<readonly string[]>([])
   const [quickIndex, setQuickIndex] = useState(0)
   const [quickLoading, setQuickLoading] = useState(false)
   const [quickError, setQuickError] = useState<string | null>(null)
+  const [quickTruncated, setQuickTruncated] = useState(false)
   const searchInput = useRef<HTMLInputElement | null>(null)
   const quickInput = useRef<HTMLInputElement | null>(null)
   const showQuickOpen = useCallback((): void => {
@@ -107,6 +116,7 @@ function ExplorerPanelInner(props: ExplorerPanelProps): ReactElement {
     setQuickOpen(true)
     setQuickQuery('')
     setQuickResults([])
+    setQuickTruncated(false)
     setQuickIndex(0)
     setQuickLoading(false)
     setQuickError(null)
@@ -239,6 +249,7 @@ function ExplorerPanelInner(props: ExplorerPanelProps): ReactElement {
       ]
       setQuickResults(recentPaths.slice(0, 50))
       setQuickError(null)
+      setQuickTruncated(false)
       setQuickLoading(false)
       setQuickIndex(0)
       return
@@ -251,14 +262,17 @@ function ExplorerPanelInner(props: ExplorerPanelProps): ReactElement {
         if (result.ok) {
           setQuickResults(result.value.results)
           setQuickError(null)
+          setQuickTruncated(result.value.truncated === true)
           setQuickIndex(0)
         } else {
           setQuickResults([])
+          setQuickTruncated(false)
           setQuickError(result.error.message)
         }
       }).catch((cause: unknown) => {
         if (!controller.signal.aborted) {
           setQuickResults([])
+          setQuickTruncated(false)
           setQuickError(cause instanceof Error ? cause.message : 'Quick Open failed')
         }
       }).finally(() => {
@@ -313,14 +327,26 @@ function ExplorerPanelInner(props: ExplorerPanelProps): ReactElement {
       selectMatch(matches[0])
     }
   }
+  const expandAll = (): void => {
+    setExpandLimitReached(false)
+    setTreeAction((current) => {
+      const id = (current?.id ?? 0) + 1
+      return { id, action: 'expand', budget: createTreeExpansionBudget(id, () => setExpandLimitReached(true)) }
+    })
+  }
+  const collapseAll = (): void => {
+    setExpandLimitReached(false)
+    setTreeAction((current) => ({ id: (current?.id ?? 0) + 1, action: 'collapse' }))
+  }
 
   return (
     <div className={css.panel} data-file-explorer-panel="">
       <div className={css.toolbar}>
         <div className={css.workspaceName} title={rootPath || undefined}>{workspaceLabel(rootPath)}</div>
         <div className={css.toolbarActions}>
-          <ExpandAllIconButton title={t('expandAll')} onClick={() => setExpandSignal((value) => value + 1)} />
-          <CollapseAllIconButton title={t('collapseAll')} onClick={() => setCollapseSignal((value) => value + 1)} />
+          <NewFileIconButton title={t('createFile')} onClick={() => setCreateOpen(true)} />
+          <ExpandAllIconButton title={t('expandAll')} onClick={expandAll} />
+          <CollapseAllIconButton title={t('collapseAll')} onClick={collapseAll} />
           <HiddenFilesToggleIconButton
             title={showHidden ? t('hideHiddenFiles') : t('showHiddenFiles')}
             active={showHidden}
@@ -330,26 +356,37 @@ function ExplorerPanelInner(props: ExplorerPanelProps): ReactElement {
           <RefreshIconButton title={t('refresh')} onClick={bump} />
         </div>
       </div>
+      {expandLimitReached ? <div className={css.searchMessage} role="status">{t('expandAllLimitReached')}</div> : null}
       <div className={css.searchWrap}>
-        <input
-          ref={searchInput}
-          className={css.searchInput}
-          type="search"
-          role="searchbox"
-          aria-label={t('searchWorkspace')}
-          aria-expanded={searchOpen && query.trim() !== ''}
-          aria-controls="workspace-search-results"
-          placeholder={t('searchWorkspace')}
-          value={query}
-          onFocus={() => setSearchOpen(true)}
-          onChange={(event) => {
-            setQuery(event.target.value)
-            setMatches([])
-            setSearching(event.target.value.trim() !== '')
-            setSearchOpen(true)
-          }}
-          onKeyDown={handleSearchKeyDown}
-        />
+        <div className={css.searchControls}>
+          <input
+            ref={searchInput}
+            className={css.searchInput}
+            type="search"
+            role="searchbox"
+            aria-label={t('searchWorkspace')}
+            aria-expanded={searchOpen && query.trim() !== ''}
+            aria-controls="workspace-search-results"
+            placeholder={t('searchWorkspace')}
+            value={query}
+            onFocus={() => setSearchOpen(true)}
+            onChange={(event) => {
+              setQuery(event.target.value)
+              setMatches([])
+              setSearching(event.target.value.trim() !== '')
+              setSearchOpen(true)
+            }}
+            onKeyDown={handleSearchKeyDown}
+          />
+          <button
+            type="button"
+            className={css.replaceOpenButton}
+            title={t('replaceTitle')}
+            aria-label={t('replaceTitle')}
+            data-file-explorer-replace=""
+            onClick={() => setReplaceOpen(true)}
+          >{t('replaceShort')}</button>
+        </div>
         {quickOpen ? (
           <div className={css.quickOpenDialog} role="dialog" aria-label={t('quickOpen')}>
             <div className={css.quickOpenHeader}>
@@ -367,6 +404,7 @@ function ExplorerPanelInner(props: ExplorerPanelProps): ReactElement {
                 onChange={(event) => {
                   setQuickQuery(event.target.value)
                   setQuickResults([])
+                  setQuickTruncated(false)
                   setQuickIndex(0)
                   setQuickLoading(event.target.value.trim() !== '')
                   setQuickError(null)
@@ -378,6 +416,7 @@ function ExplorerPanelInner(props: ExplorerPanelProps): ReactElement {
             <div className={css.quickOpenResults} id="workspace-quick-open-results" role="listbox">
               {quickLoading ? <div className={css.searchMessage} role="status">{t('searching')}</div> : null}
               {quickError !== null ? <div className={css.searchMessage} role="alert">{quickError}</div> : null}
+              {quickTruncated && quickError === null ? <div className={css.searchMessage} role="status">{t('quickOpenPartial')}</div> : null}
               {!quickLoading && quickError === null && quickResults.length === 0 ? <div className={css.searchMessage}>{t('quickOpenEmpty')}</div> : null}
               {visibleQuickResults.map((path, index) => (
                 <button
@@ -437,13 +476,37 @@ function ExplorerPanelInner(props: ExplorerPanelProps): ReactElement {
                 onOpenFile={onOpenFile}
                 onError={setError}
                 refreshToken={refreshToken}
-                expandSignal={expandSignal}
-                collapseSignal={collapseSignal}
+                treeAction={treeAction}
+                expandCascadeId={null}
+                expandBudget={null}
               />
             ))}
           </ul>
         </div>
       )}
+      {createOpen ? (
+        <CreateFileDialog
+          api={api}
+          t={t}
+          onClose={() => setCreateOpen(false)}
+          onCreated={(path) => {
+            setCreateOpen(false)
+            setError(null)
+            setSelectedPath(path)
+            bump()
+            onOpenFile(path, undefined, true)
+          }}
+        />
+      ) : null}
+      {replaceOpen ? (
+        <GlobalReplaceDialog
+          api={api}
+          buffers={buffers}
+          t={t}
+          initialFindText={query.trim()}
+          onClose={() => setReplaceOpen(false)}
+        />
+      ) : null}
     </div>
   )
 }

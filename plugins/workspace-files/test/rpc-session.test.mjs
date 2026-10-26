@@ -19,6 +19,21 @@ test('binds delayed editor saves to their original Session, not the newly select
   assert.equal(calls[0][0], 'session-A')
 })
 
+test('binds file creation to the originating Session', async () => {
+  const calls = []
+  const ctx = {
+    get: () => ({ adapter: { current: { getSnapshot: () => ({ key: 'session-B' }) } } }),
+    remote: { explorerFs: { createFile: async (...args) => {
+      calls.push(args)
+      return { ok: true, value: { ok: true, path: 'notes/new.md', version: 'v1' } }
+    } } },
+  }
+  const apiForA = createExplorerApi(ctx, 'session-A')
+  const outcome = await apiForA.createFile('notes/new.md', '')
+  assert.equal(outcome.ok, true)
+  assert.deepEqual(calls[0], ['session-A', 'notes/new.md', '', undefined])
+})
+
 test('keeps every sequential Close All save in its originating Session', async () => {
   let activeSession = 'session-A'
   const calls = []

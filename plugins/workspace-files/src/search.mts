@@ -1,4 +1,6 @@
 const IGNORED_DIRECTORIES = new Set(['.git', 'node_modules', '.pnpm-store', 'dist', 'build', 'coverage'])
+const MAX_DIRECTORY_FRONTIER = 2_000
+export const MAX_GLOB_FILTER_CHARS = 512
 const BINARY_EXTENSIONS = new Set([
   '.7z', '.a', '.avi', '.bin', '.bmp', '.class', '.dll', '.dylib', '.exe',
   '.gif', '.gz', '.ico', '.jar', '.jpeg', '.jpg', '.mp3', '.mp4', '.o',
@@ -16,11 +18,14 @@ type SearchDocument = {
   readonly text?: string
   readonly content?: string
   readonly offset?: number
+  readonly truncated?: boolean
+  /** Conservative read-byte accounting when content could not be decoded. */
+  readonly bytesRead?: number
 }
 type OperationResult<T> =
   | { readonly ok: true; readonly value: T }
   | { readonly ok: false; readonly error?: { readonly message?: string } }
-export type WorkspaceSearchTruncation = 'files' | 'directories' | 'bytes' | 'lines'
+export type WorkspaceSearchTruncation = 'files' | 'directories' | 'bytes' | 'lines' | 'results'
 
 export interface WorkspaceSearchResult {
   readonly path: string
@@ -52,6 +57,7 @@ export interface QuickOpenOptions {
   readonly maxResults?: number
   readonly maxFiles?: number
   readonly maxDirectories?: number
+  readonly onTruncated?: () => void
 }
 
 export function fuzzyPathScore(path: string, query: string): number | null {
@@ -85,11 +91,17 @@ export async function quickOpenWorkspace(
   query: string,
   options: QuickOpenOptions = {},
 ): Promise<string[]> {
-  const { signal, maxResults = 100, maxFiles = 5000, maxDirectories = 2000 } = options
+  const { signal, maxResults = 100, maxFiles = 5000, maxDirectories = 2000, onTruncated } = options
   const pending = ['']
   const candidates: Array<{ readonly path: string; readonly score: number }> = []
   let visitedFiles = 0
   let visitedDirectories = 0
+  let truncated = false
+  const reportTruncated = (): void => {
+    if (truncated) return
+    truncated = true
+    onTruncated?.()
+  }
   while (pending.length > 0 && visitedDirectories < maxDirectories) {
     signal?.throwIfAborted()
     const current = pending.pop()!
@@ -100,16 +112,23 @@ export async function quickOpenWorkspace(
       const entryType = entry.type ?? (entry.kind === 'dir' ? 'directory' : entry.kind)
       const path = relativePath(current, entry.name)
       if (entryType === 'directory') {
-        if (!IGNORED_DIRECTORIES.has(entry.name)) pending.push(path)
+        if (IGNORED_DIRECTORIES.has(entry.name)) continue
+        if (pending.length < MAX_DIRECTORY_FRONTIER) pending.push(path)
+        else reportTruncated()
         continue
       }
       if (entryType !== 'file') continue
-      if (++visitedFiles > maxFiles) break
+      if (++visitedFiles > maxFiles) {
+        reportTruncated()
+        break
+      }
       const score = fuzzyPathScore(path, query)
       if (score !== null) candidates.push({ path, score })
     }
     if (visitedFiles > maxFiles) break
   }
+  if (pending.length > 0) reportTruncated()
+  if (candidates.length > maxResults) reportTruncated()
   return candidates
     .sort((left, right) => left.score - right.score || left.path.localeCompare(right.path))
     .slice(0, maxResults)
@@ -228,6 +247,10 @@ export async function searchWorkspace(
     exclude = [],
     onTruncated,
   } = options
+  const globFilterChars = [...include, ...exclude].reduce((total, pattern) => total + pattern.length, 0)
+  if (globFilterChars > MAX_GLOB_FILTER_CHARS) {
+    throw new Error(`Glob filter limit is ${MAX_GLOB_FILTER_CHARS} characters.`)
+  }
   const matcher = compileMatcher(needle, { caseSensitive, regex, wholeWord })
   const includeGlobs = include.map(globMatcher)
   const excludeGlobs = exclude.map(globMatcher)
@@ -240,12 +263,13 @@ export async function searchWorkspace(
   let visitedFiles = 0
   let visitedDirectories = 0
   let visitedBytes = 0
+  let frontierTruncated = false
 
-  while (pending.length > 0 && results.length < maxResults) {
+  search: while (pending.length > 0) {
     signal?.throwIfAborted()
     if (++visitedDirectories > maxDirectories) {
       onTruncated?.('directories')
-      break
+      break search
     }
     const current = pending.pop()!
     const listing = unwrap(await files.list(scope, current, signal), `List ${current || 'workspace'}`)
@@ -254,28 +278,50 @@ export async function searchWorkspace(
       const childPath = relativePath(current, entry.name)
       const entryType = entry.type ?? (entry.kind === 'dir' ? 'directory' : entry.kind)
       if (entryType === 'directory') {
-        if (!IGNORED_DIRECTORIES.has(entry.name)) pending.push(childPath)
+        if (IGNORED_DIRECTORIES.has(entry.name)) continue
+        if (pending.length < MAX_DIRECTORY_FRONTIER) pending.push(childPath)
+        else if (!frontierTruncated) {
+          frontierTruncated = true
+          onTruncated?.('directories')
+        }
         continue
       }
       if (entryType !== 'file' || BINARY_EXTENSIONS.has(extensionOf(entry.name))) continue
-      if (!matchesGlob(childPath) || (entry.size !== undefined && entry.size > maxFileBytes)) continue
       if (++visitedFiles > maxFiles) {
         onTruncated?.('files')
-        break
+        break search
+      }
+      if (!matchesGlob(childPath)) continue
+      if (entry.size !== undefined && entry.size > maxFileBytes) {
+        onTruncated?.('files')
+        continue
       }
       const document = unwrap(await files.read(scope, childPath, {
         offset: 1,
         limit: maxLines,
         maxBytes: maxFileBytes,
       }, signal), `Read ${childPath}`)
+      if (document.truncated === true) {
+        visitedBytes += document.bytesRead ?? maxFileBytes
+        if (visitedBytes > maxTotalBytes) {
+          onTruncated?.('bytes')
+          break search
+        }
+        onTruncated?.('files')
+        continue
+      }
       const text = document.text ?? document.content
-      if (typeof text !== 'string' || text.includes('\0')) continue
+      if (typeof text !== 'string') continue
       const size = new TextEncoder().encode(text).byteLength
-      if (size > maxFileBytes) continue
-      visitedBytes += size
+      visitedBytes += Math.max(size, document.bytesRead ?? 0)
       if (visitedBytes > maxTotalBytes) {
         onTruncated?.('bytes')
-        break
+        break search
+      }
+      if (text.includes('\0')) continue
+      if (size > maxFileBytes) {
+        onTruncated?.('files')
+        continue
       }
       const allLines = text.split(/\r?\n/u)
       // Large files are scanned up to the per-file cap instead of failing the whole search.
@@ -285,10 +331,15 @@ export async function searchWorkspace(
         lines = allLines.slice(0, maxLines)
       }
       const offset = Number.isInteger(document.offset) ? document.offset! : 1
-      for (let index = 0; index < lines.length && results.length < maxResults; index += 1) {
+      for (let index = 0; index < lines.length; index += 1) {
         const line = lines[index] ?? ''
         matcher.lastIndex = 0
-        if (matcher.test(line)) results.push({ path: childPath, line: offset + index, snippet: line.trim().slice(0, 300) })
+        if (!matcher.test(line)) continue
+        results.push({ path: childPath, line: offset + index, snippet: line.trim().slice(0, 300) })
+        if (results.length >= maxResults) {
+          onTruncated?.('results')
+          break search
+        }
       }
     }
   }

@@ -10,6 +10,7 @@ import {
   fail,
   type FailResult,
   type FsEntry,
+  type CreateFileOk,
   type QuickOpenOk,
   type ListOk,
   type ReadOk,
@@ -18,7 +19,7 @@ import {
   type WorkspaceSearchOptions,
   type WriteOk,
 } from '../shared/rpc-contract.ts'
-import { quickOpenWorkspace, searchWorkspace } from '../search.mts'
+import { MAX_GLOB_FILTER_CHARS, quickOpenWorkspace, searchWorkspace } from '../search.mts'
 import { isEditableText } from './content-type.ts'
 import { guardPath } from './path-guard.ts'
 
@@ -52,10 +53,8 @@ function failure(error: unknown, action: string): FailResult {
     case 'FS_NOT_OBSERVED': return fail('CONFLICT', 'file changed on disk; reload it before saving')
     case 'FS_SANDBOX_DENIED':
     case 'FS_PERMISSION_DENIED': return fail('SANDBOX_DENIED', 'the workspace sandbox denied this operation')
-    default: {
-      const detail = error instanceof Error && error.message.length > 0 ? `: ${error.message.slice(0, 200)}` : ''
-      return fail('IO', `${action} failed${detail}`)
-    }
+    default:
+      return fail('IO', `${action} failed`)
   }
 }
 
@@ -117,6 +116,46 @@ async function resolvePath(self: ExplorerFsService, scope: WorkspaceFileScope, p
   }
 }
 
+interface ReadObservation {
+  readonly result: FsOpResult<ReadOk>
+  readonly bytesRead?: number
+}
+
+async function readWorkspaceText(
+  self: ExplorerFsService,
+  scope: WorkspaceFileScope,
+  path: string,
+  signal?: AbortSignal,
+): Promise<ReadObservation> {
+  const resolved = await resolvePath(self, scope, path, signal)
+  if (!resolved.ok) return { result: resolved.result }
+  try {
+    const lstat = await self.context.fs.lstat(resolved.absolute, undefined, signal)
+    if (lstat === undefined) return { result: fail('NOT_FOUND', 'path not found') }
+    if (lstat.type === 'symlink') return { result: fail('OUT_OF_ROOT', 'symbolic links cannot be edited') }
+    const info = await self.context.fs.stat(resolved.target, signal)
+    if (info === undefined) return { result: fail('NOT_FOUND', 'path not found') }
+    if (info.type === 'directory') return { result: fail('IS_DIR', 'path is a directory') }
+    if (info.type !== 'file') return { result: fail('IS_BINARY', 'only regular text files can be edited') }
+    if (info.size !== undefined && info.size > MAX_FILE_BYTES) {
+      return { result: fail('TOO_LARGE', `file exceeds the ${MAX_FILE_BYTES} byte editor limit`) }
+    }
+    const bytes = await self.context.fs.readBytes(resolved.target, signal, MAX_FILE_BYTES)
+    if (!isEditableText(path, bytes.subarray(0, SAMPLE_BYTES))) {
+      return { result: fail('IS_BINARY', 'file looks binary and cannot be edited'), bytesRead: bytes.byteLength }
+    }
+    let content: string
+    try {
+      content = new TextDecoder('utf-8', { fatal: true }).decode(bytes)
+    } catch {
+      return { result: fail('IS_BINARY', 'file is not valid UTF-8 text'), bytesRead: bytes.byteLength }
+    }
+    return { result: { ok: true, content, version: String(info.version) }, bytesRead: bytes.byteLength }
+  } catch (error) {
+    return { result: failure(error, 'Reading') }
+  }
+}
+
 function joinRelative(parent: string, name: string): string {
   return parent === '' ? name : `${parent}/${name}`
 }
@@ -171,30 +210,7 @@ export class ExplorerFsService extends TypertRemoteService {
 
   @Remote
   async read(scope: WorkspaceFileScope, path: string, signal?: AbortSignal): Promise<FsOpResult<ReadOk>> {
-    const self = selfOf(this)
-    const resolved = await resolvePath(self, scope, path, signal)
-    if (!resolved.ok) return resolved.result
-    try {
-      const lstat = await self.context.fs.lstat(resolved.absolute, undefined, signal)
-      if (lstat === undefined) return fail('NOT_FOUND', 'path not found')
-      if (lstat.type === 'symlink') return fail('OUT_OF_ROOT', 'symbolic links cannot be edited')
-      const info = await self.context.fs.stat(resolved.target, signal)
-      if (info === undefined) return fail('NOT_FOUND', 'path not found')
-      if (info.type === 'directory') return fail('IS_DIR', 'path is a directory')
-      if (info.type !== 'file') return fail('IS_BINARY', 'only regular text files can be edited')
-      if (info.size !== undefined && info.size > MAX_FILE_BYTES) return fail('TOO_LARGE', `file exceeds the ${MAX_FILE_BYTES} byte editor limit`)
-      const bytes = await self.context.fs.readBytes(resolved.target, signal, MAX_FILE_BYTES)
-      if (!isEditableText(path, bytes.subarray(0, SAMPLE_BYTES))) return fail('IS_BINARY', 'file looks binary and cannot be edited')
-      let content: string
-      try {
-        content = new TextDecoder('utf-8', { fatal: true }).decode(bytes)
-      } catch {
-        return fail('IS_BINARY', 'file is not valid UTF-8 text')
-      }
-      return { ok: true, content, version: String(info.version) }
-    } catch (error) {
-      return failure(error, 'Reading')
-    }
+    return (await readWorkspaceText(selfOf(this), scope, path, signal)).result
   }
 
   @Remote
@@ -222,14 +238,16 @@ export class ExplorerFsService extends TypertRemoteService {
       },
       read: async () => ({ ok: true as const, value: { content: '', offset: 1 } }),
     }
+    let truncated = false
     try {
       const results = await quickOpenWorkspace(files, null, query, {
         signal: controller.signal,
         maxResults: 100,
         maxFiles: 5000,
         maxDirectories: 2000,
+        onTruncated: () => { truncated = true },
       })
-      return { ok: true, results }
+      return { ok: true, results, ...(truncated ? { truncated: true } : {}) }
     } catch {
       return fail('IO', controller.signal.aborted ? 'quick-open was cancelled or timed out' : 'quick-open failed')
     } finally {
@@ -245,7 +263,10 @@ export class ExplorerFsService extends TypertRemoteService {
     options: WorkspaceSearchOptions = {},
     signal?: AbortSignal,
   ): Promise<FsOpResult<SearchOk>> {
-    if (query.length > 512 || (options.include?.length ?? 0) > 20 || (options.exclude?.length ?? 0) > 20) {
+    const globFilterChars = [...(options.include ?? []), ...(options.exclude ?? [])]
+      .reduce((total, pattern) => total + pattern.length, 0)
+    if (query.length > 512 || (options.include?.length ?? 0) > 20 || (options.exclude?.length ?? 0) > 20
+      || globFilterChars > MAX_GLOB_FILTER_CHARS) {
       return fail('IO', 'search request exceeds its input limits')
     }
     const self = selfOf(this)
@@ -254,21 +275,34 @@ export class ExplorerFsService extends TypertRemoteService {
     const forwardAbort = (): void => controller.abort(signal?.reason)
     if (signal?.aborted) forwardAbort()
     else signal?.addEventListener('abort', forwardAbort, { once: true })
+    const fileSizes = new Map<string, number>()
     const files = {
       list: async (_scope: unknown, path: string, requestSignal?: AbortSignal) => {
         const result = await self.list(scope, path, requestSignal)
         return result.ok
-          ? { ok: true as const, value: { entries: result.entries.map((entry) => ({
-              name: entry.name,
-              type: entry.kind === 'dir' ? 'directory' as const : 'file' as const,
-              ...(entry.size !== undefined ? { size: entry.size } : {}),
-            })) } }
+          ? { ok: true as const, value: { entries: result.entries.map((entry) => {
+              if (entry.size !== undefined) fileSizes.set(entry.path, entry.size)
+              return {
+                name: entry.name,
+                type: entry.kind === 'dir' ? 'directory' as const : 'file' as const,
+                ...(entry.size !== undefined ? { size: entry.size } : {}),
+              }
+            }) } }
           : { ok: false as const, error: { message: result.message } }
       },
       read: async (_scope: unknown, path: string, _range?: { offset: number; limit: number; maxBytes?: number }, requestSignal?: AbortSignal) => {
-        const result = await self.read(scope, path, requestSignal)
+        const observation = await readWorkspaceText(self, scope, path, requestSignal)
+        const result = observation.result
         if (!result.ok && ['NOT_FOUND', 'OUT_OF_ROOT', 'IS_BINARY', 'TOO_LARGE'].includes(result.code)) {
-          return { ok: true as const, value: { content: '', offset: 1 } }
+          return {
+            ok: true as const,
+            value: {
+              content: '',
+              offset: 1,
+              ...(result.code === 'TOO_LARGE' ? { truncated: true, bytesRead: MAX_FILE_BYTES } : {}),
+              ...(result.code === 'IS_BINARY' ? { bytesRead: observation.bytesRead ?? fileSizes.get(path) ?? MAX_FILE_BYTES } : {}),
+            },
+          }
         }
         return result.ok
           ? { ok: true as const, value: { content: result.content, offset: 1 } }
@@ -294,6 +328,63 @@ export class ExplorerFsService extends TypertRemoteService {
     } finally {
       clearTimeout(timer)
       signal?.removeEventListener('abort', forwardAbort)
+    }
+  }
+
+  @Remote
+  async createFile(
+    scope: WorkspaceFileScope,
+    path: string,
+    content: string,
+    signal?: AbortSignal,
+  ): Promise<FsOpResult<CreateFileOk>> {
+    const self = selfOf(this)
+    if (typeof path !== 'string' || path.includes('\0')) {
+      return fail('OUT_OF_ROOT', 'invalid workspace file path')
+    }
+    if (typeof content !== 'string') return fail('IO', 'file content must be text')
+    if (new TextEncoder().encode(content).byteLength > MAX_FILE_BYTES) {
+      return fail('TOO_LARGE', `file exceeds the ${MAX_FILE_BYTES} byte editor limit`)
+    }
+    const scoped = await resolveScope(self, scope, signal)
+    if (!scoped.ok) return scoped.result
+    const guarded = guardPath(scoped.rootPath, path)
+    if (!guarded.ok || guarded.relative === '') {
+      return fail('OUT_OF_ROOT', 'a non-empty workspace-relative file path is required')
+    }
+    const parentPath = entryParent(guarded.relative)
+    const parent = await resolvePath(self, scope, parentPath, signal)
+    if (!parent.ok) return parent.result
+    if (scoped.session === undefined || scoped.policy === undefined) {
+      return fail('NO_SESSION', 'a live session policy is required to create files')
+    }
+    if (self.context.fs.sandboxMode === undefined) {
+      return fail('SANDBOX_DENIED', 'a sandbox-enforcing filesystem is required for file creation')
+    }
+    try {
+      const parentInfo = await self.context.fs.stat(parent.target, signal)
+      if (parentInfo === undefined || parentInfo.type !== 'directory') {
+        return fail('NOT_FOUND', 'parent directory does not exist')
+      }
+      const existing = await self.context.fs.lstat(guarded.relative, { cwd: scoped.rootPath }, signal)
+      if (existing?.type === 'symlink') {
+        return fail('OUT_OF_ROOT', 'symbolic links are not allowed in workspace paths')
+      }
+      if (existing !== undefined) return fail('CONFLICT', 'a file or directory already exists at this path')
+      const target = await self.context.fs.resolve(guarded.absolute, { signal })
+      if (!self.context.fs.contains(scoped.root, target)) {
+        return fail('OUT_OF_ROOT', 'path escapes the session workspace')
+      }
+      const outcome = await self.context.fs.writeText(
+        target,
+        content,
+        { kind: 'createIfAbsent' },
+        signal,
+        scoped.policy,
+      )
+      return { ok: true, path: guarded.relative, version: String(outcome.version) }
+    } catch (error) {
+      return failure(error, 'Creating file')
     }
   }
 

@@ -312,6 +312,7 @@ function FilesView(props: {
               ctx={ctx}
               api={api}
               tabs={tabs}
+              buffers={buffers}
               onOpenFile={(path, line, edit) => {
                 requestOpenPath(path, line, edit)
               }}

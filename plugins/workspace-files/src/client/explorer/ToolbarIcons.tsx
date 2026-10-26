@@ -3,11 +3,11 @@
 import type { ReactElement } from 'react'
 import css from './explorer.module.css'
 
-function IconShell(props: { readonly children: ReactElement; readonly title: string; readonly onClick: () => void }): ReactElement {
+function IconShell(props: { readonly children: ReactElement; readonly title: string; readonly onClick: () => void; readonly className?: string }): ReactElement {
   return (
     <button
       type="button"
-      className={css.iconBtn}
+      className={props.className ?? css.iconBtn}
       title={props.title}
       aria-label={props.title}
       onClick={props.onClick}
@@ -22,6 +22,25 @@ const svgProps = {
   viewBox: '0 0 16 16',
   fill: 'none',
   'aria-hidden': true as const,
+}
+
+/** Document with a plus — create an empty text file. */
+export function NewFileIconButton(props: { readonly title: string; readonly onClick: () => void }): ReactElement {
+  return (
+    <button
+      type="button"
+      className={css.iconBtn}
+      title={props.title}
+      aria-label={props.title}
+      data-file-explorer-create-file=""
+      onClick={props.onClick}
+    >
+      <svg {...svgProps}>
+        <path d="M4 1.8h5.3L12 4.5v9.7H4z" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round" />
+        <path d="M9.2 1.8v3h2.9M8 8v4m-2-2h4" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+      </svg>
+    </button>
+  )
 }
 
 /** Circular arrows — refresh. */
@@ -41,25 +60,25 @@ export function RefreshIconButton(props: { readonly title: string; readonly onCl
   )
 }
 
-/** Nested chevrons — expand all. */
+/** File-folder with plus — expand all. */
 export function ExpandAllIconButton(props: { readonly title: string; readonly onClick: () => void }): ReactElement {
   return (
-    <IconShell title={props.title} onClick={props.onClick}>
+    <IconShell title={props.title} onClick={props.onClick} className={`${css.iconBtn} ${css.treeActionBtn}`}>
       <svg {...svgProps}>
-        <path d="M3 4.5 8 9l5-4.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
-        <path d="M3 8.5 8 13l5-4.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+        <path d="M1.7 4h4.6l1.1 1.5h6.9v8H1.7z" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round" />
+        <path d="M8 7.3v4.1m-2-2.05h4" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
       </svg>
     </IconShell>
   )
 }
 
-/** Nested chevrons up — collapse all. */
+/** File-folder with minus — collapse all. */
 export function CollapseAllIconButton(props: { readonly title: string; readonly onClick: () => void }): ReactElement {
   return (
-    <IconShell title={props.title} onClick={props.onClick}>
+    <IconShell title={props.title} onClick={props.onClick} className={`${css.iconBtn} ${css.treeActionBtn}`}>
       <svg {...svgProps}>
-        <path d="M3 7.5 8 3l5 4.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
-        <path d="M3 11.5 8 7l5 4.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+        <path d="M1.7 4h4.6l1.1 1.5h6.9v8H1.7z" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round" />
+        <path d="M6 9.35h4" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
       </svg>
     </IconShell>
   )
