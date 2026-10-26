@@ -4,7 +4,7 @@ The v0.0.1 base is released. This change set covers tree/list/read, double-click
 
 ## Reproducible checks
 
-- `pnpm test` from this package → **120 passing Node tests, 0 failures** (2026-10-26). The script compiles with `tsc` first. Existing React/jsdom event warnings and TypeError logs still print during editor UI tests without failing them.
+- `pnpm test` from this package → **123 passing Node tests, 0 failures** (2026-10-26). The script compiles with `tsc` first. Existing React/jsdom event warnings and TypeError logs still print during editor UI tests without failing them.
 - `pnpm exec node --import ./test/register-css.mjs --test test/view-shortcuts.test.mjs` (from this package) → 3 view-tab input tests passing, 0 failures.
 - `pnpm exec node --import ./test/register-css.mjs --test test/desktop-option-shortcuts.test.mjs` (from this package) → 2 renderer-fallback tests passing, 0 failures.
 - `pnpm --filter dsh-workspace-enhanced exec tsc -p tsconfig.json --noEmit` → no TypeScript errors.
@@ -27,11 +27,12 @@ The v0.0.1 base is released. This change set covers tree/list/read, double-click
 - `pnpm build` from this package → Host TypeScript compilation and Client bundle complete after the create/global-replace/search-hardening changes (2026-10-26). This verifies the plugin build only; it does not install or modify the user's Desktop profile.
 - `npm_config_cache=/tmp/dsh-workspace-enhanced-npm-cache npm pack --dry-run --json` from this package directory: verified 62 archive files, including Host/Client entry points, Typert Host, search runtime, README, and LICENSE.
 - Loading the built Client bundle with a stubbed `window.__ModuleLoader__` registers `{ id: 'dsh-workspace-enhanced', factory }`, so the DSH client loader contract is satisfied.
-- Full-suite Node coverage (`node --experimental-test-coverage --import ./test/register-css.mjs --test test/*.test.mjs`, 2026-10-26) reports **80.85% lines / 75.93% branches / 74.12% functions** across instrumented files; branch/function coverage is below 80%. UI coverage is compiled-component/jsdom only, not end-to-end Desktop coverage. Earlier coverage results are historical snapshots.
+- Full-suite Node coverage (`node --experimental-test-coverage --import ./test/register-css.mjs --test test/*.test.mjs`, 2026-10-26) reports **80.85% lines / 75.88% branches / 74.12% functions** across instrumented files; branch/function coverage is below 80%. UI coverage is compiled-component/jsdom only, not end-to-end Desktop coverage. Earlier coverage results are historical snapshots.
 
 ## RED → GREEN evidence
 
 - Search byte accounting: 17 one-byte opaque files first caused a false truncation before a later text match; Host now charges byte length from the actual read, even for binary contents. A second regression grows 33 opaque files after listing and verifies actual read bytes still trigger the aggregate cap.
+- Search per-file I/O: a file that grows after `stat` initially used the editor's 2 MiB read cap despite the search's 1 MiB limit; regressions verify the Host read receives the stricter cap, stale-growing files do not prematurely exhaust the aggregate budget, and public editor reads still accept content above 1 MiB up to 2 MiB.
 - Glob filter work: new tests first failed because filtered files bypassed the candidate limit and large combined glob filters were accepted; search now caps combined filter text at 512 characters and counts candidates before matching filters.
 - File creation: the new Host integration test first failed with `service.createFile is not a function`; after adding the session-scoped `createIfAbsent` path, it passes duplicate-target, traversal, symlink-parent, missing-parent, size, session-policy, and sandbox checks.
 - Global replacement: the multi-file draft-race test first showed an unintended write to `b.txt` after its buffer became dirty during the first write. Per-file preflight checks now skip the changed file and preserve drafts; the race and partial-version-conflict tests pass.

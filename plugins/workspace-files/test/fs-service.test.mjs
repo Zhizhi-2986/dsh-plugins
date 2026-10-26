@@ -4,13 +4,14 @@ import { ExplorerFsService } from '../lib/host/fs-service.js'
 
 const scope = { sessionId: 'session-1', workspaceRoot: '/workspace' }
 
-function createService({ truncated = false, content: initialContent, entrySize = 5, unknownStatSize = false, readFailure, workspaceEntries, extraFiles = {} } = {}) {
+function createService({ truncated = false, content: initialContent, entrySize = 5, unknownStatSize = false, readFailure, workspaceEntries, extraFiles = {}, beforeRead } = {}) {
   const files = new Map([
     ['/workspace/note.txt', { content: initialContent ?? 'first', version: 'v1' }],
     ...Object.entries(extraFiles).map(([path, content]) => [`/workspace/${path}`, { content, version: 'v1' }]),
   ])
   const directories = new Set(['/workspace', '/workspace/docs'])
   const calls = []
+  const readByteLimits = []
   const fs = {
     sandboxMode: 'workspace-write',
     async resolve(path) { return { targetKey: path, displayPath: path } },
@@ -30,9 +31,15 @@ function createService({ truncated = false, content: initialContent, entrySize =
       }
       return directories.has(target.targetKey) ? { type: 'directory', version: 'root' } : undefined
     },
-    async readBytes(target) {
+    async readBytes(target, _signal, maxBytes) {
+      readByteLimits.push(maxBytes)
       if (readFailure !== undefined) throw Object.assign(new Error('mock read failure'), { code: readFailure })
-      return new TextEncoder().encode(files.get(target.targetKey)?.content ?? '')
+      await beforeRead?.(target.targetKey, files)
+      const bytes = new TextEncoder().encode(files.get(target.targetKey)?.content ?? '')
+      if (maxBytes !== undefined && bytes.byteLength > maxBytes) {
+        throw Object.assign(new Error('too large'), { code: 'FS_TOO_LARGE' })
+      }
+      return bytes
     },
     async writeText(target, next, intent, signal, policy) {
       calls.push({ target, next, intent, signal, policy })
@@ -63,7 +70,7 @@ function createService({ truncated = false, content: initialContent, entrySize =
       },
     },
   }
-  return { service, calls }
+  return { service, calls, readByteLimits }
 }
 
 test('reads session-scoped text and saves only with an observed version', async () => {
@@ -73,6 +80,15 @@ test('reads session-scoped text and saves only with an observed version', async 
   assert.equal(calls[0].intent.kind, 'replaceIfVersion')
   assert.equal(calls[0].policy.workspaceRoot, '/workspace')
   assert.deepEqual(await service.read(scope, 'note.txt'), { ok: true, content: 'second', version: 'v2' })
+})
+
+test('preserves the 2 MiB editor read limit above the 1 MiB search cap', async () => {
+  const content = 'x'.repeat(1024 * 1024 + 1)
+  const { service, readByteLimits } = createService({ content })
+  const result = await service.read(scope, 'note.txt')
+  assert.equal(result.ok, true)
+  assert.equal(result.content.length, content.length)
+  assert.equal(readByteLimits.at(-1), 2 * 1024 * 1024)
 })
 
 test('creates text files atomically only when the destination is absent in an existing workspace directory', async () => {
@@ -166,6 +182,43 @@ test('charges bytes actually read when opaque files grow after the directory lis
   })
 })
 
+test('caps Host reads at the search per-file limit when a file grows after stat', async () => {
+  const { service, readByteLimits } = createService({
+    beforeRead: async (path, files) => {
+      if (path === '/workspace/note.txt') files.set(path, { content: 'x'.repeat(1024 * 1024 + 1), version: 'v2' })
+    },
+  })
+  const result = await service.search(scope, 'needle', {})
+  assert.deepEqual(result, { ok: true, results: [], truncated: true })
+  assert.equal(readByteLimits.at(-1), 1024 * 1024)
+})
+
+test('charges stale-growing files by the search cap and reaches later matches', async () => {
+  const growingPaths = Array.from({ length: 17 }, (_, index) => `growing-${index}.txt`)
+  const workspaceEntries = [
+    ...growingPaths.map((name) => ({ name, type: 'file', size: 1 })),
+    { name: 'match.txt', type: 'file', size: 6 },
+  ]
+  const extraFiles = Object.fromEntries([
+    ...growingPaths.map((path) => [path, 'x']),
+    ['match.txt', 'needle'],
+  ])
+  const { service } = createService({
+    workspaceEntries,
+    extraFiles,
+    beforeRead: async (path, files) => {
+      if (path.startsWith('/workspace/growing-')) {
+        files.set(path, { content: 'x'.repeat(1024 * 1024 + 1), version: 'v2' })
+      }
+    },
+  })
+  assert.deepEqual(await service.search(scope, 'needle', {}), {
+    ok: true,
+    results: [{ path: 'match.txt', line: 1, snippet: 'needle' }],
+    truncated: true,
+  })
+})
+
 test('rejects workspace-search glob filters beyond the total character budget', async () => {
   const { service } = createService()
   const pattern = 'a'.repeat(256)
@@ -197,13 +250,14 @@ test('propagates oversized-file skips as incomplete search metadata to Client', 
 })
 
 test('flags files with missing size metadata when readBytes rejects them as too large', async () => {
-  const { service } = createService({
+  const { service, readByteLimits } = createService({
     content: 'needle',
     entrySize: null,
     unknownStatSize: true,
     readFailure: 'FS_TOO_LARGE',
   })
   assert.deepEqual(await service.search(scope, 'needle', {}), { ok: true, results: [], truncated: true })
+  assert.equal(readByteLimits.at(-1), 1024 * 1024)
 })
 
 test('rejects stale saves without overwriting the unsaved buffer', async () => {

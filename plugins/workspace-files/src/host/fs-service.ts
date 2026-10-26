@@ -126,6 +126,7 @@ async function readWorkspaceText(
   scope: WorkspaceFileScope,
   path: string,
   signal?: AbortSignal,
+  maxBytes = MAX_FILE_BYTES,
 ): Promise<ReadObservation> {
   const resolved = await resolvePath(self, scope, path, signal)
   if (!resolved.ok) return { result: resolved.result }
@@ -137,10 +138,10 @@ async function readWorkspaceText(
     if (info === undefined) return { result: fail('NOT_FOUND', 'path not found') }
     if (info.type === 'directory') return { result: fail('IS_DIR', 'path is a directory') }
     if (info.type !== 'file') return { result: fail('IS_BINARY', 'only regular text files can be edited') }
-    if (info.size !== undefined && info.size > MAX_FILE_BYTES) {
-      return { result: fail('TOO_LARGE', `file exceeds the ${MAX_FILE_BYTES} byte editor limit`) }
+    if (info.size !== undefined && info.size > maxBytes) {
+      return { result: fail('TOO_LARGE', `file exceeds the ${maxBytes} byte read limit`) }
     }
-    const bytes = await self.context.fs.readBytes(resolved.target, signal, MAX_FILE_BYTES)
+    const bytes = await self.context.fs.readBytes(resolved.target, signal, maxBytes)
     if (!isEditableText(path, bytes.subarray(0, SAMPLE_BYTES))) {
       return { result: fail('IS_BINARY', 'file looks binary and cannot be edited'), bytesRead: bytes.byteLength }
     }
@@ -290,8 +291,9 @@ export class ExplorerFsService extends TypertRemoteService {
             }) } }
           : { ok: false as const, error: { message: result.message } }
       },
-      read: async (_scope: unknown, path: string, _range?: { offset: number; limit: number; maxBytes?: number }, requestSignal?: AbortSignal) => {
-        const observation = await readWorkspaceText(self, scope, path, requestSignal)
+      read: async (_scope: unknown, path: string, range?: { offset: number; limit: number; maxBytes?: number }, requestSignal?: AbortSignal) => {
+        const maxBytes = Math.min(range?.maxBytes ?? MAX_FILE_BYTES, MAX_FILE_BYTES)
+        const observation = await readWorkspaceText(self, scope, path, requestSignal, maxBytes)
         const result = observation.result
         if (!result.ok && ['NOT_FOUND', 'OUT_OF_ROOT', 'IS_BINARY', 'TOO_LARGE'].includes(result.code)) {
           return {
@@ -299,7 +301,7 @@ export class ExplorerFsService extends TypertRemoteService {
             value: {
               content: '',
               offset: 1,
-              ...(result.code === 'TOO_LARGE' ? { truncated: true, bytesRead: MAX_FILE_BYTES } : {}),
+              ...(result.code === 'TOO_LARGE' ? { truncated: true, bytesRead: maxBytes } : {}),
               ...(result.code === 'IS_BINARY' ? { bytesRead: observation.bytesRead ?? fileSizes.get(path) ?? MAX_FILE_BYTES } : {}),
             },
           }
