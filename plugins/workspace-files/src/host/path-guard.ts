@@ -29,7 +29,7 @@ export function normalizeRelativeInput(input: string): string | null {
   if (input.length > MAX_WORKSPACE_PATH_LENGTH) return null
   if (input === '' || input === '.') return ''
   const slashInput = input.replaceAll('\\', '/')
-  if (isAbsolute(slashInput)) return null
+  if (isAbsolute(slashInput) || /^[A-Za-z]:/u.test(slashInput)) return null
   const normalized = normalize(slashInput).replaceAll('\\', '/')
   if (normalized === '.' ) return ''
   if (normalized.startsWith('../') || normalized === '..') return null

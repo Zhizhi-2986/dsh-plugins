@@ -20,60 +20,53 @@ function settingsScope(openLinksInEditor) {
   }
 }
 
-function mountConversationTabs(label, clicked) {
+function mountConversationTabs() {
   document.body.innerHTML = `
     <div data-conversation-tabs="" role="tablist">
       <button type="button" role="tab" data-view="chat">Chat</button>
-      <button type="button" role="tab" data-view="files">${label}</button>
+      <button type="button" role="tab" data-view="other">Other</button>
     </div>
     <p><a href="docs/guide.md">docs/guide.md</a></p>
   `
-  document.querySelector('[data-view="files"]').addEventListener('click', () => clicked.push('files'))
   return document.querySelector('a')
 }
 
-test('clicking a conversation file link switches to the Files tab and queues the path', () => {
-  const clicked = []
-  const link = mountConversationTabs('Files', clicked)
+test('clicking a conversation file link opens its native Session-scoped resource preview', () => {
+  const link = mountConversationTabs()
   const opened = []
-  const onOpen = (event) => opened.push(event.detail)
-  window.addEventListener('file-explorer:open', onOpen)
-  const dispose = installOpenLinksInterceptor(settingsScope(true), () => 'Files')
+  const dispose = installOpenLinksInterceptor(settingsScope(true), () => 'session-1', (address) => opened.push(address))
   try {
     link.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true, cancelable: true }))
-    assert.deepEqual(clicked, ['files'], 'the Files tab is activated first')
-    assert.deepEqual(opened.map((detail) => detail.path), ['docs/guide.md'])
+    assert.equal(document.querySelector('[data-view="other"]').getAttribute('aria-selected'), null)
+    assert.deepEqual(opened, ['dsh-resource://file/session/session-1/docs/guide.md'])
   } finally {
     dispose()
-    window.removeEventListener('file-explorer:open', onOpen)
   }
 })
 
 test('leaves links alone when interception is disabled', () => {
-  const clicked = []
-  const link = mountConversationTabs('文件', clicked)
+  const link = mountConversationTabs()
   const opened = []
-  const onOpen = (event) => opened.push(event.detail)
-  window.addEventListener('file-explorer:open', onOpen)
-  const dispose = installOpenLinksInterceptor(settingsScope(false), () => '文件')
+  const dispose = installOpenLinksInterceptor(settingsScope(false), () => 'session-1', (address) => opened.push(address))
   try {
     link.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true, cancelable: true }))
-    assert.deepEqual(clicked, [])
+    assert.equal(link.getAttribute('href'), 'docs/guide.md')
     assert.deepEqual(opened, [])
   } finally {
     dispose()
-    window.removeEventListener('file-explorer:open', onOpen)
   }
 })
 
-test('matches the localized Files tab label', () => {
-  const clicked = []
-  const link = mountConversationTabs('文件', clicked)
-  const dispose = installOpenLinksInterceptor(settingsScope(true), () => '文件')
-  try {
-    link.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true, cancelable: true }))
-    assert.deepEqual(clicked, ['files'])
-  } finally {
-    dispose()
+test('does not intercept a file link when there is no active Session target', () => {
+  for (const sessionId of [undefined, null]) {
+    const link = mountConversationTabs()
+    const dispose = installOpenLinksInterceptor(settingsScope(true), () => sessionId, () => {})
+    try {
+      const event = new dom.window.MouseEvent('click', { bubbles: true, cancelable: true })
+      link.dispatchEvent(event)
+      assert.equal(event.defaultPrevented, false)
+    } finally {
+      dispose()
+    }
   }
 })

@@ -68,7 +68,7 @@ function createHarness() {
   return { api, ctx, tabs, buffers, opened, created, writes, root, onOpenFile: (path, line, edit) => opened.push({ path, line, ...(edit === undefined ? {} : { edit }) }) }
 }
 
-test('renders the workspace tree and opens a file on click', async () => {
+test('renders the workspace tree, opens on click, and never edits on double-click', async () => {
   const harness = createHarness()
   try {
     await act(async () => harness.root.render(React.createElement(ExplorerPanel, {
@@ -77,7 +77,10 @@ test('renders the workspace tree and opens a file on click', async () => {
     await flush()
     const labels = [...document.querySelectorAll('[role="treeitem"]')].map((row) => row.textContent)
     assert.deepEqual(labels, ['docs', 'readme.md'])
-    await act(async () => document.querySelectorAll('[role="treeitem"]')[1].click())
+    const fileRow = document.querySelectorAll('[role="treeitem"]')[1]
+    await act(async () => fileRow.click())
+    assert.deepEqual(harness.opened, [{ path: 'readme.md', line: undefined }])
+    await act(async () => Simulate.doubleClick(fileRow))
     assert.deepEqual(harness.opened, [{ path: 'readme.md', line: undefined }])
   } finally { await act(async () => harness.root.unmount()); document.getElementById('app').replaceChildren() }
 })

@@ -1,6 +1,8 @@
 /** Shared RPC DTOs and fail codes for `explorerFs`. */
 
 export const EXPLORER_FS_SERVICE = 'explorerFs' as const
+/** Bound opaque version tokens crossing the Client/Host RPC boundary. */
+export const MAX_FS_VERSION_TOKEN_CHARS = 256
 
 export type EntryKind = 'file' | 'dir'
 
@@ -21,6 +23,7 @@ export type FailCode =
   | 'CONFLICT'
   | 'SANDBOX_DENIED'
   | 'NO_SESSION'
+  | 'READ_ONLY'
   | 'IO'
 
 export interface FailResult {

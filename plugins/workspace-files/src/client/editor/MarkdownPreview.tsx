@@ -8,6 +8,7 @@ import css from './editor.module.css'
 
 export interface MarkdownPreviewProps {
   readonly content: string
+  readonly blockImages?: boolean
 }
 
 /**
@@ -16,11 +17,11 @@ export interface MarkdownPreviewProps {
 export function MarkdownPreview(props: MarkdownPreviewProps): ReactElement {
   const html = useMemo(() => {
     try {
-      return renderSafeMarkdown(props.content)
+      return renderSafeMarkdown(props.content, { blockImages: props.blockImages })
     } catch (error) {
       return `<pre>${escapeHtml(error instanceof Error ? error.message : 'preview failed')}</pre>`
     }
-  }, [props.content])
+  }, [props.content, props.blockImages])
 
   return (
     <div

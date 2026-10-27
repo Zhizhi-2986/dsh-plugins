@@ -1,22 +1,24 @@
 /** Hand-authored Host Typert face for the external plugin package. */
 
 import { z } from 'zod'
+import { MAX_FS_VERSION_TOKEN_CHARS } from './shared/rpc-contract.ts'
 
 const PACKAGE = 'dsh-workspace-enhanced'
 const SERVICE = 'explorerFs'
 const MAX_FILE_BYTES = 2 * 1024 * 1024
 const Str = z.string()
+const VersionToken = Str.min(1).max(MAX_FS_VERSION_TOKEN_CHARS)
 const FailCode = z.enum([
   'OUT_OF_ROOT', 'NOT_FOUND', 'IS_BINARY', 'IS_DIR',
-  'TOO_LARGE', 'CONFLICT', 'SANDBOX_DENIED', 'NO_SESSION', 'IO',
+  'TOO_LARGE', 'CONFLICT', 'SANDBOX_DENIED', 'NO_SESSION', 'READ_ONLY', 'IO',
 ])
 const FailResult = z.object({ ok: z.literal(false), code: FailCode, message: z.string() })
 const RootOk = z.object({ ok: z.literal(true), root: z.string() })
 const FsEntry = z.object({ name: z.string(), path: z.string(), kind: z.enum(['file', 'dir']), size: z.number().optional() })
 const ListOk = z.object({ ok: z.literal(true), entries: z.array(FsEntry) })
-const ReadOk = z.object({ ok: z.literal(true), content: z.string(), version: z.string() })
-const WriteOk = z.object({ ok: z.literal(true), version: z.string() })
-const CreateFileOk = z.object({ ok: z.literal(true), path: z.string(), version: z.string() })
+const ReadOk = z.object({ ok: z.literal(true), content: z.string(), version: VersionToken })
+const WriteOk = z.object({ ok: z.literal(true), version: VersionToken })
+const CreateFileOk = z.object({ ok: z.literal(true), path: z.string(), version: VersionToken })
 const SearchOptions = z.object({
   caseSensitive: z.boolean().optional(),
   regex: z.boolean().optional(),
@@ -95,7 +97,7 @@ export const TYPERT = {
     invocation('write', [
       jsonParam('path', Str.max(1024)),
       jsonParam('content', Str.max(MAX_FILE_BYTES)),
-      jsonParam('expectedVersion'),
+      jsonParam('expectedVersion', VersionToken),
     ], resultCodec(z.union([WriteOk, FailResult]), 'WriteResult'), true),
   ],
 }

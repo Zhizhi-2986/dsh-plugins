@@ -8,6 +8,7 @@ import type {
 } from '@deepseek-ai/dsh-typert-protocol'
 import {
   EXPLORER_FS_SERVICE,
+  MAX_FS_VERSION_TOKEN_CHARS,
   type FailResult,
   type FsEntry,
   type CreateFileOk,
@@ -22,9 +23,10 @@ import {
 
 const PKG = 'dsh-workspace-enhanced'
 const Str = z.string()
+const VersionToken = Str.min(1).max(MAX_FS_VERSION_TOKEN_CHARS)
 const FailCode = z.enum([
   'OUT_OF_ROOT', 'NOT_FOUND', 'IS_BINARY', 'IS_DIR',
-  'TOO_LARGE', 'CONFLICT', 'SANDBOX_DENIED', 'NO_SESSION', 'IO',
+  'TOO_LARGE', 'CONFLICT', 'SANDBOX_DENIED', 'NO_SESSION', 'READ_ONLY', 'IO',
 ])
 const FailResultSchema = z.object({ ok: z.literal(false), code: FailCode, message: z.string() })
 const RootOkSchema = z.object({ ok: z.literal(true), root: z.string() })
@@ -32,9 +34,9 @@ const FsEntrySchema = z.object({
   name: z.string(), path: z.string(), kind: z.enum(['file', 'dir']), size: z.number().optional(),
 })
 const ListOkSchema = z.object({ ok: z.literal(true), entries: z.array(FsEntrySchema) })
-const ReadOkSchema = z.object({ ok: z.literal(true), content: z.string(), version: z.string() })
-const WriteOkSchema = z.object({ ok: z.literal(true), version: z.string() })
-const CreateFileOkSchema = z.object({ ok: z.literal(true), path: z.string(), version: z.string() })
+const ReadOkSchema = z.object({ ok: z.literal(true), content: z.string(), version: VersionToken })
+const WriteOkSchema = z.object({ ok: z.literal(true), version: VersionToken })
+const CreateFileOkSchema = z.object({ ok: z.literal(true), path: z.string(), version: VersionToken })
 const SearchOptionsSchema = z.object({
   caseSensitive: z.boolean().optional(),
   regex: z.boolean().optional(),
@@ -116,7 +118,7 @@ export const TYPERT_REMOTE: TypertRemoteContribution = {
     invocation('search', [strParam('query', Str.max(512)), typedParam('options', SearchOptionsSchema, 'WorkspaceSearchOptions')], resultCodec(SearchResultSchema, 'SearchResult'), true),
     invocation('quickOpen', [strParam('query', Str.max(256))], resultCodec(QuickOpenResultSchema, 'QuickOpenResult'), true),
     invocation('createFile', [strParam('path', Str.max(1024)), strParam('content', Str.max(2 * 1024 * 1024))], resultCodec(CreateFileResultSchema, 'CreateFileResult'), true),
-    invocation('write', [strParam('path', Str.max(1024)), strParam('content', Str.max(2 * 1024 * 1024)), strParam('expectedVersion')], resultCodec(WriteResultSchema, 'WriteResult'), true),
+    invocation('write', [strParam('path', Str.max(1024)), strParam('content', Str.max(2 * 1024 * 1024)), strParam('expectedVersion', VersionToken)], resultCodec(WriteResultSchema, 'WriteResult'), true),
   ],
 }
 

@@ -60,6 +60,13 @@ export type ExplorerKey =
   | 'hideHiddenFiles'
   | 'searchEnterQuery'
   | 'editorEdit'
+  | 'editorEditAction'
+  | 'editorReadFailed'
+  | 'codePreviewCopy'
+  | 'codePreviewCopied'
+  | 'codePreviewTitle'
+  | 'codePreviewWrap'
+  | 'codePreviewUnwrap'
   | 'editorView'
   | 'editorConflict'
   | 'editorFind'
@@ -73,6 +80,18 @@ export type ExplorerKey =
   | 'quickOpenClose'
   | 'quickOpenEmpty'
   | 'quickOpenPartial'
+  | 'favoriteTitle'
+  | 'favoriteLoading'
+  | 'favoriteClose'
+  | 'favoriteChecking'
+  | 'favoriteAddDeferred'
+  | 'favoriteEmpty'
+  | 'favoriteOpen'
+  | 'favoriteRemove'
+  | 'favoriteUnavailable'
+  | 'favoriteLimitReached'
+  | 'favoriteSaveFailed'
+  | 'favoriteSaving'
   | 'createFile'
   | 'createFileHint'
   | 'createFilePath'
@@ -107,8 +126,8 @@ const zh: Record<ExplorerKey, string> = {
   emptyWorkspace: '工作区为空',
   settingsTitle: '工作区文件',
   settingsDescription: '文件链接与实验性 Tab 排序',
-  settingsOpenLinks: '在编辑器中打开对话内文件链接',
-  settingsOpenLinksHint: '拦截会话消息里的本地路径链接，并在文件编辑器中打开',
+  settingsOpenLinks: '在原生预览中打开对话内文件链接',
+  settingsOpenLinksHint: '拦截会话消息里的工作区路径链接，并在 DSH 原生预览中打开',
   settingsReorderTabs: '实验性：拖拽排序顶部视图 Tab',
   settingsReorderTabsHint: '仅改变 Desktop 的视觉顺序；读屏和焦点顺序仍按原始 Tab 顺序。插件停用后恢复原貌。',
   expand: '展开',
@@ -149,14 +168,21 @@ const zh: Record<ExplorerKey, string> = {
   editorSchemeEmpty: '暂无已保存方案',
   editorSchemeRemove: '删除方案',
   editorFilePath: '文件路径',
-  searchWorkspace: '在工作区中搜索',
+  searchWorkspace: '搜索文件内容',
   searching: '正在搜索…',
   searchNoResults: '没有匹配项',
   searchPartial: '结果可能不完整：部分文件过大或超出扫描上限',
   showHiddenFiles: '显示隐藏文件',
   hideHiddenFiles: '不显示隐藏文件',
   searchEnterQuery: '输入文字搜索文件内容',
-  editorEdit: '进入编辑',
+  editorEdit: '编辑文件',
+  editorEditAction: '编辑',
+  editorReadFailed: '无法读取文件以开始编辑；请检查会话后重试。',
+  codePreviewCopy: '复制',
+  codePreviewCopied: '已复制',
+  codePreviewTitle: '代码',
+  codePreviewWrap: '自动换行',
+  codePreviewUnwrap: '取消自动换行',
   editorView: '查看模式',
   editorConflict: '文件已被外部修改，未保存内容已保留；请重新载入后再试。',
   editorFind: '查找',
@@ -166,10 +192,22 @@ const zh: Record<ExplorerKey, string> = {
   editorFindNext: '下一个匹配项',
   editorFindClose: '关闭查找',
   quickOpen: '快速打开',
-  quickOpenPlaceholder: '按名称查找文件（可加 :行号）',
+  quickOpenPlaceholder: '按文件名或路径搜索（可加 :行号）',
   quickOpenClose: '关闭快速打开',
-  quickOpenEmpty: '没有最近文件或匹配文件',
+  quickOpenEmpty: '输入文件名或路径开始搜索',
   quickOpenPartial: 'Quick Open 结果可能不完整；可缩小搜索范围后重试。',
+  favoriteTitle: '收藏',
+  favoriteLoading: '正在读取收藏…',
+  favoriteClose: '关闭收藏',
+  favoriteChecking: '正在检查文件…',
+  favoriteAddDeferred: '当前 Files API 未提供文件行右键菜单；暂不能新增收藏。',
+  favoriteEmpty: '当前工作区暂无收藏文件',
+  favoriteOpen: '打开收藏文件',
+  favoriteRemove: '移除收藏',
+  favoriteUnavailable: '文件不存在或当前会话无法访问；收藏已保留，可移除后重试。',
+  favoriteLimitReached: '单个工作区最多收藏 200 个文件。',
+  favoriteSaveFailed: '收藏保存失败，请检查设置权限后重试。',
+  favoriteSaving: '正在保存收藏…',
   createFile: '新建文件',
   createFileHint: '输入工作区根目录下的相对路径；父目录必须已存在。',
   createFilePath: '相对工作区根目录的文件路径',
@@ -202,8 +240,8 @@ const en: Record<ExplorerKey, string> = {
   emptyWorkspace: 'Empty workspace',
   settingsTitle: 'Workspace files',
   settingsDescription: 'File links and experimental tab ordering',
-  settingsOpenLinks: 'Open conversation file links in editor',
-  settingsOpenLinksHint: 'Intercept local path links in conversation messages and open them in the file editor',
+  settingsOpenLinks: 'Open conversation file links in native Preview',
+  settingsOpenLinksHint: 'Intercept workspace file links in conversation messages and open the DSH native Preview',
   settingsReorderTabs: 'Experimental: drag to reorder top View tabs',
   settingsReorderTabsHint: 'Visual order only on Desktop; screen-reader and focus order remain unchanged. Disabling the plugin restores the native tabs.',
   expand: 'Expand',
@@ -244,7 +282,7 @@ const en: Record<ExplorerKey, string> = {
   editorSchemeEmpty: 'No saved schemes yet',
   editorSchemeRemove: 'Remove scheme',
   editorFilePath: 'File path',
-  searchWorkspace: 'Search workspace',
+  searchWorkspace: 'Search file contents',
   searching: 'Searching…',
   searchNoResults: 'No matches',
   searchPartial: 'Results may be incomplete: some files exceeded the scan limits',
@@ -252,6 +290,13 @@ const en: Record<ExplorerKey, string> = {
   hideHiddenFiles: 'Hide hidden files',
   searchEnterQuery: 'Enter text to search file contents',
   editorEdit: 'Edit file',
+  editorEditAction: 'Edit',
+  editorReadFailed: 'Could not read this file for editing. Check the Session and retry.',
+  codePreviewCopy: 'Copy',
+  codePreviewCopied: 'Copied',
+  codePreviewTitle: 'Code',
+  codePreviewWrap: 'Wrap lines',
+  codePreviewUnwrap: 'Unwrap lines',
   editorView: 'View mode',
   editorConflict: 'The file changed outside the editor. Your unsaved text was kept; reload before saving again.',
   editorFind: 'Find',
@@ -261,10 +306,22 @@ const en: Record<ExplorerKey, string> = {
   editorFindNext: 'Next match',
   editorFindClose: 'Close find',
   quickOpen: 'Quick Open',
-  quickOpenPlaceholder: 'Find a file by name (add :line)',
+  quickOpenPlaceholder: 'Search file name or path (optional :line)',
   quickOpenClose: 'Close Quick Open',
-  quickOpenEmpty: 'No recent or matching files',
+  quickOpenEmpty: 'Enter a file name or path to search',
   quickOpenPartial: 'Quick Open results may be incomplete; try a narrower query.',
+  favoriteTitle: 'Favorites',
+  favoriteLoading: 'Loading Favorites…',
+  favoriteClose: 'Close Favorites',
+  favoriteChecking: 'Checking file…',
+  favoriteAddDeferred: 'The current Files API has no file-row context menu; adding Favorites is deferred.',
+  favoriteEmpty: 'No Favorites for this workspace yet.',
+  favoriteOpen: 'Open favorite file',
+  favoriteRemove: 'Remove favorite',
+  favoriteUnavailable: 'This file is missing or unavailable in the current Session; the favorite is kept so you can remove or retry it.',
+  favoriteLimitReached: 'A workspace can have at most 200 Favorites.',
+  favoriteSaveFailed: 'Could not save Favorites. Check profile settings access and retry.',
+  favoriteSaving: 'Saving Favorite…',
   createFile: 'New file',
   createFileHint: 'Enter a path relative to the workspace root. Parent directories must already exist.',
   createFilePath: 'File path from workspace root',

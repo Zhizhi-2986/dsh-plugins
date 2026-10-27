@@ -7,6 +7,7 @@ import type {} from '@deepseek-ai/dsh-sandbox-policy'
 import { Remote, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
 import {
   EXPLORER_FS_SERVICE,
+  MAX_FS_VERSION_TOKEN_CHARS,
   fail,
   type FailResult,
   type FsEntry,
@@ -26,6 +27,10 @@ import { guardPath } from './path-guard.ts'
 const MAX_FILE_BYTES = 2 * 1024 * 1024
 const MAX_LIST_ENTRIES = 1000
 const SAMPLE_BYTES = 8192
+
+function hasUsableVersionToken(version: string): boolean {
+  return version.length > 0 && version.length <= MAX_FS_VERSION_TOKEN_CHARS
+}
 
 type FsOpResult<T> = T | FailResult
 
@@ -141,6 +146,10 @@ async function readWorkspaceText(
     if (info.size !== undefined && info.size > maxBytes) {
       return { result: fail('TOO_LARGE', `file exceeds the ${maxBytes} byte read limit`) }
     }
+    const version = String(info.version)
+    if (!hasUsableVersionToken(version)) {
+      return { result: fail('CONFLICT', 'filesystem returned an unusable file version; reload it before editing') }
+    }
     const bytes = await self.context.fs.readBytes(resolved.target, signal, maxBytes)
     if (!isEditableText(path, bytes.subarray(0, SAMPLE_BYTES))) {
       return { result: fail('IS_BINARY', 'file looks binary and cannot be edited'), bytesRead: bytes.byteLength }
@@ -151,7 +160,7 @@ async function readWorkspaceText(
     } catch {
       return { result: fail('IS_BINARY', 'file is not valid UTF-8 text'), bytesRead: bytes.byteLength }
     }
-    return { result: { ok: true, content, version: String(info.version) }, bytesRead: bytes.byteLength }
+    return { result: { ok: true, content, version }, bytesRead: bytes.byteLength }
   } catch (error) {
     return { result: failure(error, 'Reading') }
   }
@@ -384,7 +393,11 @@ export class ExplorerFsService extends TypertRemoteService {
         signal,
         scoped.policy,
       )
-      return { ok: true, path: guarded.relative, version: String(outcome.version) }
+      const version = String(outcome.version)
+      if (!hasUsableVersionToken(version)) {
+        return fail('CONFLICT', 'file was created but the filesystem returned an unusable version; reopen it before editing')
+      }
+      return { ok: true, path: guarded.relative, version }
     } catch (error) {
       return failure(error, 'Creating file')
     }
@@ -399,8 +412,8 @@ export class ExplorerFsService extends TypertRemoteService {
     signal?: AbortSignal,
   ): Promise<FsOpResult<WriteOk>> {
     const self = selfOf(this)
-    if (typeof expectedVersion !== 'string' || expectedVersion.length === 0) {
-      return fail('CONFLICT', 'an observed file version is required before saving')
+    if (typeof expectedVersion !== 'string' || !hasUsableVersionToken(expectedVersion)) {
+      return fail('CONFLICT', `an observed file version of 1 to ${MAX_FS_VERSION_TOKEN_CHARS} characters is required before saving`)
     }
     if (new TextEncoder().encode(content).byteLength > MAX_FILE_BYTES) {
       return fail('TOO_LARGE', `file exceeds the ${MAX_FILE_BYTES} byte editor limit`)
@@ -423,7 +436,11 @@ export class ExplorerFsService extends TypertRemoteService {
       }
       const intent = { kind: 'replaceIfVersion' as const, version: FsVersion(expectedVersion) }
       const outcome = await self.context.fs.writeText(resolved.target, content, intent, signal, resolved.policy)
-      return { ok: true, version: String(outcome.version) }
+      const version = String(outcome.version)
+      if (!hasUsableVersionToken(version)) {
+        return fail('CONFLICT', 'file was saved but the filesystem returned an unusable version; reload it before saving again')
+      }
+      return { ok: true, version }
     } catch (error) {
       return failure(error, 'Saving')
     }

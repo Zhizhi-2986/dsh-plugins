@@ -1,7 +1,8 @@
-import { useState, type FormEvent, type ReactElement } from 'react'
+import { useRef, useState, type FormEvent, type ReactElement } from 'react'
 import { createPortal } from 'react-dom'
 import type { ExplorerApi } from '../rpc.ts'
 import type { ExplorerTranslate } from '../locales.ts'
+import { trapDialogTab } from '../dialog-focus.ts'
 import css from './explorer.module.css'
 
 export function CreateFileDialog(props: {
@@ -14,6 +15,7 @@ export function CreateFileDialog(props: {
   const [path, setPath] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const dialogRef = useRef<HTMLElement | null>(null)
 
   const submit = async (event: FormEvent<HTMLFormElement>): Promise<void> => {
     event.preventDefault()
@@ -41,11 +43,16 @@ export function CreateFileDialog(props: {
       onMouseDown={(event) => { if (event.target === event.currentTarget && !busy) onClose() }}
     >
       <section
+        ref={dialogRef}
         className={css.dialogPanel}
         role="dialog"
         aria-modal="true"
         aria-labelledby="workspace-create-file-title"
-        onKeyDown={(event) => { if (event.key === 'Escape' && !busy) onClose() }}
+        tabIndex={-1}
+        onKeyDown={(event) => {
+          trapDialogTab(event, dialogRef.current)
+          if (event.key === 'Escape' && !busy) onClose()
+        }}
       >
         <h2 id="workspace-create-file-title" className={css.dialogTitle}>{t('createFile')}</h2>
         <p className={css.dialogDescription}>{t('createFileHint')}</p>

@@ -32,10 +32,10 @@ function fire(element, type, init = {}) {
 }
 
 function button(label) {
-  return [...document.querySelectorAll('button')].find((item) => item.textContent === label)
+  return [...document.querySelectorAll('button')].find((item) => item.textContent === label || item.getAttribute('aria-label') === label)
 }
 
-async function mountEditor({ path = 'note.md', content = 'Hello **world**' } = {}) {
+async function mountEditor({ path = 'note.md', content = 'Hello **world**', sessionId, request = true } = {}) {
   dom.window.require = undefined
   const tabs = new TabsStore()
   const buffers = new BuffersStore()
@@ -50,8 +50,8 @@ async function mountEditor({ path = 'note.md', content = 'Hello **world**' } = {
   }
   const ctx = { locale: { subscribe: () => () => {}, getSnapshot: () => ({ active: 'en-US' }) } }
   const root = createRoot(document.getElementById('app'))
-  await act(async () => root.render(React.createElement(EditorSurface, { ctx, api, tabs, buffers, mdModes })))
-  await act(async () => requestOpenPath(path, undefined, false))
+  await act(async () => root.render(React.createElement(EditorSurface, { ctx, api, tabs, buffers, mdModes, sessionId })))
+  if (request) await act(async () => requestOpenPath(path, undefined, false, sessionId))
   await flush()
   return {
     path, root, tabs, buffers, mdModes, writes,
@@ -89,17 +89,113 @@ test('opens a path that was requested before the editor mounted', async () => {
   }
 })
 
-test('preview renders sanitized Markdown, double-click edits, Save button persists', async () => {
+test('keeps queued file-open requests scoped to their originating Session', async () => {
+  await act(async () => requestOpenPath('session-a.md', undefined, false, 'session-a'))
+  const otherSession = await mountEditor({ sessionId: 'session-b', request: false })
+  try {
+    assert.deepEqual(otherSession.tabs.getSnapshot().open, [])
+  } finally { await otherSession.cleanup() }
+
+  const targetSession = await mountEditor({ sessionId: 'session-a', request: false })
+  try {
+    await flush()
+    assert.deepEqual(targetSession.tabs.getSnapshot().open.map((tab) => tab.path), ['session-a.md'])
+  } finally { await targetSession.cleanup() }
+})
+
+test('editor shows one current file without mode/theme controls and Save exits edit mode', async () => {
   const view = await mountEditor()
   try {
-    await act(async () => button('Preview').click())
-    assert.match(document.querySelector('[data-file-explorer-preview]').innerHTML, /<strong>world<\/strong>/u)
-    await act(async () => fire(document.querySelector('[data-file-explorer-editor] strong'), 'dblclick'))
-    assert.equal(view.mdModes.get(view.path), 'source')
+    assert.equal(document.querySelector('[role="tablist"]'), null)
+    assert.equal(button('Source'), undefined)
+    assert.equal(button('Preview'), undefined)
+    assert.equal(button('Appearance'), undefined)
+    await act(async () => button('Edit file').click())
     await typeIntoTextarea('changed **markdown**')
     await act(async () => button('Save').click())
     assert.deepEqual(view.writes[0]?.slice(0, 3), ['note.md', 'changed **markdown**', 'v1'])
     assert.equal(view.buffers.isDirty('note.md'), false)
+    assert.ok(button('Edit file'), 'successful save returns to read mode')
+    assert.equal(document.querySelector('textarea').readOnly, true)
+  } finally { await view.cleanup() }
+})
+
+test('editor chrome exposes a primary action and bottom status strip', async () => {
+  const view = await mountEditor()
+  try {
+    assert.ok(document.querySelector('[data-editor-primary-action]'))
+    const canvas = document.querySelector('[data-editor-canvas]')
+    const status = document.querySelector('[data-editor-status-bar]')
+    assert.ok(canvas)
+    assert.ok(status)
+    assert.equal((canvas.compareDocumentPosition(status) & dom.window.Node.DOCUMENT_POSITION_FOLLOWING) !== 0, true)
+    await act(async () => button('Edit file').click())
+    assert.equal(document.querySelector('[data-editor-primary-action]')?.textContent.trim(), 'Save')
+  } finally { await view.cleanup() }
+})
+
+test('double-clicking the editor canvas does not enter edit mode', async () => {
+  const view = await mountEditor({ path: 'canvas.txt', content: 'read only' })
+  try {
+    const textarea = document.querySelector('textarea')
+    assert.ok(textarea)
+    assert.equal(textarea.readOnly, true)
+    await act(async () => fire(document.querySelector('[data-editor-canvas]'), 'dblclick'))
+    assert.equal(textarea.readOnly, true)
+    assert.ok(button('Edit file'))
+    assert.equal(view.writes.length, 0)
+  } finally { await view.cleanup() }
+})
+
+test('editor textarea follows the Desktop color scheme', async () => {
+  const previous = document.documentElement.style.colorScheme
+  document.documentElement.style.colorScheme = 'light'
+  const view = await mountEditor({ path: 'theme.txt' })
+  try {
+    assert.equal(document.querySelector('textarea').style.colorScheme, 'light')
+  } finally {
+    await view.cleanup()
+    document.documentElement.style.colorScheme = previous
+  }
+})
+
+test('editor infers a light Desktop theme from the page background when color-scheme is unset', async () => {
+  const previousScheme = document.documentElement.style.colorScheme
+  const previousBackground = document.body.style.backgroundColor
+  document.documentElement.style.colorScheme = ''
+  document.body.style.backgroundColor = 'rgb(255, 255, 255)'
+  const view = await mountEditor({ path: 'background-theme.txt' })
+  try {
+    assert.equal(document.querySelector('textarea').style.colorScheme, 'light')
+  } finally {
+    await view.cleanup()
+    document.documentElement.style.colorScheme = previousScheme
+    document.body.style.backgroundColor = previousBackground
+  }
+})
+
+test('editor infers a dark Desktop theme from the page background when color-scheme is unset', async () => {
+  const previousScheme = document.documentElement.style.colorScheme
+  const previousBackground = document.body.style.backgroundColor
+  document.documentElement.style.colorScheme = ''
+  document.body.style.backgroundColor = 'rgb(20, 20, 20)'
+  const view = await mountEditor({ path: 'dark-background-theme.txt' })
+  try {
+    assert.equal(document.querySelector('textarea').style.colorScheme, 'dark')
+  } finally {
+    await view.cleanup()
+    document.documentElement.style.colorScheme = previousScheme
+    document.body.style.backgroundColor = previousBackground
+  }
+})
+
+test('Find action is an icon button with an accessible label', async () => {
+  const view = await mountEditor({ path: 'find-icon.txt', content: 'needle' })
+  try {
+    const find = button('Find')
+    assert.ok(find)
+    assert.ok(find.querySelector('svg'), 'find control should use an icon')
+    assert.equal(find.getAttribute('aria-label'), 'Find')
   } finally { await view.cleanup() }
 })
 
@@ -114,6 +210,7 @@ test('Save answers a click even when nothing changed', async () => {
     await flush()
     assert.equal(view.writes.length, 0)
     assert.match(document.querySelector('[data-file-explorer-editor]').textContent, /没有需要保存的改动|No changes to save/u)
+    assert.ok(button('Edit file'), 'saving a clean buffer also exits edit mode')
   } finally { await view.cleanup() }
 })
 
@@ -138,17 +235,13 @@ test('blurring the editor saves unsaved changes', async () => {
   } finally { await view.cleanup() }
 })
 
-test('closing a dirty tab saves it before the tab closes', async () => {
-  const view = await mountEditor({ path: 'close.txt', content: 'x' })
+test('single-file editor does not expose tab activation or close controls', async () => {
+  const view = await mountEditor({ path: 'single.txt', content: 'x' })
   try {
-    await act(async () => button('Edit file').click())
-    await typeIntoTextarea('y')
-    const closeButton = document.querySelector('[data-file-explorer-editor] [role="tab"] [role="button"]')
-    assert.ok(closeButton, 'tab close control should exist')
-    await act(async () => closeButton.click())
-    await flush()
-    assert.deepEqual(view.writes[0]?.slice(0, 3), ['close.txt', 'y', 'v1'])
-    assert.deepEqual(view.tabs.getSnapshot().open, [])
+    assert.equal(document.querySelector('[role="tab"]'), null)
+    assert.equal(document.querySelector('[role="tablist"]'), null)
+    assert.equal(document.querySelector('[data-file-explorer-editor] [aria-label="Close tab"]'), null)
+    assert.equal(view.tabs.getSnapshot().activePath, 'single.txt')
   } finally { await view.cleanup() }
 })
 

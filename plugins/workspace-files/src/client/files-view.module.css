@@ -1,7 +1,5 @@
-/* Full-bleed host for the Files conversation view.
- * Root carries data-conversation-composer-overlay so ConversationRoot
- * stretches .viewArea. Shell is position:relative + height:100% with an
- * absolute fill child so we still paint if an ancestor flex rule misfires. */
+/* Full-height body occupying the native Workspace Files sidebar tab.
+ * The absolute fill child protects layout when an ancestor flex rule misfires. */
 
 .shell {
   position: relative;

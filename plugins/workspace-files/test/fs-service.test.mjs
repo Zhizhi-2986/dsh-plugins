@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { ExplorerFsService } from '../lib/host/fs-service.js'
+import { MAX_FS_VERSION_TOKEN_CHARS } from '../src/shared/rpc-contract.ts'
 
 const scope = { sessionId: 'session-1', workspaceRoot: '/workspace' }
 
@@ -91,7 +92,7 @@ test('preserves the 2 MiB editor read limit above the 1 MiB search cap', async (
   assert.equal(readByteLimits.at(-1), 2 * 1024 * 1024)
 })
 
-test('creates text files atomically only when the destination is absent in an existing workspace directory', async () => {
+test('creates text files atomically only when the destination is absent in an existing directory', async () => {
   const { service, calls } = createService()
   assert.deepEqual(await service.createFile(scope, 'docs/new.md', '# New'), { ok: true, path: 'docs/new.md', version: 'v2' })
   assert.deepEqual(calls[0].intent, { kind: 'createIfAbsent' })
@@ -106,7 +107,7 @@ test('creates text files atomically only when the destination is absent in an ex
   assert.equal(calls.length, 1)
 })
 
-test('returns the canonical workspace-relative path after creating a normalized alias', async () => {
+test('returns canonical workspace-relative paths after creating normalized aliases', async () => {
   const { service } = createService()
   assert.deepEqual(await service.createFile(scope, 'docs/../docs/new.md', ''), {
     ok: true, path: 'docs/new.md', version: 'v2',
@@ -116,7 +117,7 @@ test('returns the canonical workspace-relative path after creating a normalized 
   })
 })
 
-test('fails closed when file creation has no live session policy or sandbox-enforcing filesystem', async () => {
+test('fails closed when creation has no live session policy or sandbox filesystem', async () => {
   const noSession = createService()
   noSession.service.context.sessions.get = () => undefined
   assert.equal((await noSession.service.createFile(scope, 'docs/new.md', '')).code, 'NO_SESSION')
@@ -144,6 +145,16 @@ test('routes Quick Open and workspace search through the session-scoped Host', a
   assert.equal(quick.results[0], 'note.txt')
   const search = await service.search(scope, 'first', {})
   assert.deepEqual(search, { ok: true, results: [{ path: 'note.txt', line: 1, snippet: 'first' }] })
+})
+
+test('Quick Open omits files hidden behind a static workspace symlink', async () => {
+  const { service } = createService({
+    workspaceEntries: [
+      { name: 'linked', type: 'directory' },
+      { name: 'inside.txt', type: 'file', size: 5 },
+    ],
+  })
+  assert.deepEqual(await service.quickOpen(scope, 'linked/secret.txt'), { ok: true, results: [] })
 })
 
 test('accounts small opaque files by their observed size so later text matches remain searchable', async () => {
@@ -260,13 +271,85 @@ test('flags files with missing size metadata when readBytes rejects them as too 
   assert.equal(readByteLimits.at(-1), 1024 * 1024)
 })
 
-test('rejects stale saves without overwriting the unsaved buffer', async () => {
+test('write reports a version conflict and preserves the current file', async () => {
   const { service, calls } = createService()
-  const result = await service.write(scope, 'note.txt', 'draft', 'old-version')
-  assert.deepEqual(result.ok, false)
-  assert.equal(result.code, 'CONFLICT')
+  assert.equal((await service.write(scope, 'note.txt', 'draft', 'old-version')).code, 'CONFLICT')
   assert.equal(calls.length, 1)
   assert.deepEqual(await service.read(scope, 'note.txt'), { ok: true, content: 'first', version: 'v1' })
+})
+
+test('read rejects empty or oversized version tokens before reading file content', async () => {
+  for (const version of ['', 'v'.repeat(MAX_FS_VERSION_TOKEN_CHARS + 1)]) {
+    const { service, readByteLimits } = createService()
+    const stat = service.context.fs.stat
+    service.context.fs.stat = async (...args) => {
+      const info = await stat(...args)
+      return info?.type === 'file' ? { ...info, version } : info
+    }
+    const result = await service.read(scope, 'note.txt')
+    assert.equal(result.code, 'CONFLICT')
+    assert.equal(readByteLimits.length, 0)
+  }
+})
+
+test('create reports a conflict when the backend returns an invalid version token', async () => {
+  for (const version of ['', 'v'.repeat(MAX_FS_VERSION_TOKEN_CHARS + 1)]) {
+    const { service } = createService()
+    service.context.fs.writeText = async () => ({ version })
+    const result = await service.createFile(scope, 'docs/new.md', '')
+    assert.equal(result.code, 'CONFLICT')
+  }
+})
+
+test('write does not report empty or too-long post-write versions as usable success', async () => {
+  const versions = ['', `missing:/workspace/${'x'.repeat(MAX_FS_VERSION_TOKEN_CHARS)}`]
+  for (const version of versions) {
+    const { service } = createService()
+    service.context.fs.writeText = async () => ({ version })
+    const result = await service.write(scope, 'note.txt', 'draft', 'v1')
+    assert.equal(result.code, 'CONFLICT')
+  }
+})
+
+test('write rejects oversized version tokens before filesystem access', async () => {
+  const { service, calls } = createService()
+  const resolve = service.context.fs.resolve
+  let resolveCalls = 0
+  service.context.fs.resolve = async (...args) => {
+    resolveCalls += 1
+    return resolve(...args)
+  }
+  const result = await service.write(scope, 'note.txt', 'draft', 'v'.repeat(MAX_FS_VERSION_TOKEN_CHARS + 1))
+  assert.equal(result.code, 'CONFLICT')
+  assert.equal(resolveCalls, 0)
+  assert.equal(calls.length, 0)
+})
+
+test('write rejects missing versions, oversized content, unsafe paths, and unavailable sandbox contexts', async () => {
+  const missingVersion = createService()
+  assert.equal((await missingVersion.service.write(scope, 'note.txt', 'draft', '')).code, 'CONFLICT')
+  assert.equal(missingVersion.calls.length, 0)
+
+  const oversized = createService()
+  assert.equal((await oversized.service.write(scope, 'note.txt', 'x'.repeat(2 * 1024 * 1024 + 1), 'v1')).code, 'TOO_LARGE')
+  assert.equal(oversized.calls.length, 0)
+
+  const directory = createService()
+  assert.equal((await directory.service.write(scope, 'docs', 'draft', 'v1')).code, 'IS_DIR')
+
+  const missingFile = createService()
+  assert.equal((await missingFile.service.write(scope, 'missing.txt', 'draft', 'v1')).code, 'CONFLICT')
+
+  const symlink = createService()
+  assert.equal((await symlink.service.write(scope, 'linked', 'draft', 'v1')).code, 'OUT_OF_ROOT')
+
+  const noSession = createService()
+  noSession.service.context.sessions.get = () => undefined
+  assert.equal((await noSession.service.write(scope, 'note.txt', 'draft', 'v1')).code, 'NO_SESSION')
+
+  const noSandbox = createService()
+  noSandbox.service.context.fs.sandboxMode = undefined
+  assert.equal((await noSandbox.service.write(scope, 'note.txt', 'draft', 'v1')).code, 'SANDBOX_DENIED')
 })
 
 test('rejects static symlink paths and incomplete directory listings', async () => {
@@ -275,9 +358,16 @@ test('rejects static symlink paths and incomplete directory listings', async () 
   assert.equal((await service.list(scope, '')).code, 'TOO_LARGE')
 })
 
-test('rejects absolute paths, missing version, and session root mismatch', async () => {
+test('rejects Favorite parent listings through symlinks or outside the workspace', async () => {
   const { service } = createService()
+  assert.equal((await service.list(scope, 'linked')).code, 'OUT_OF_ROOT')
+  assert.equal((await service.list(scope, '../outside')).code, 'OUT_OF_ROOT')
+})
+
+test('rejects absolute paths and session root mismatch for reads and writes', async () => {
+  const { service, calls } = createService()
   assert.equal((await service.read(scope, '/etc/passwd')).code, 'OUT_OF_ROOT')
-  assert.equal((await service.write(scope, 'note.txt', 'draft', '')).code, 'CONFLICT')
+  assert.equal((await service.write(scope, '../outside.txt', 'draft', 'v1')).code, 'OUT_OF_ROOT')
   assert.equal((await service.read({ ...scope, workspaceRoot: '/outside' }, 'note.txt')).code, 'OUT_OF_ROOT')
+  assert.equal(calls.length, 0)
 })

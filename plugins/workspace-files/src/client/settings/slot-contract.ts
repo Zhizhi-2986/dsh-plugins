@@ -1,3 +1,2 @@
-/** Local SlotMap augmentation removed: `plugins.item` is owned by ui-plugin-manager. */
-
+/** Native Files and document-preview slot contracts are owned by DSH. */
 export {}

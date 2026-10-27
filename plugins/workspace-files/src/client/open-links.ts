@@ -1,28 +1,10 @@
 /**
- * Capture clicks on conversation file-looking links and open them in the editor.
+ * Capture clicks on conversation file-looking links and open the native resource preview.
  */
 
 import type { ConfigForm } from '@deepseek-ai/dsh-client-ui-settings/client'
 import type { FileExplorerSettings } from '../shared/settings-contract.ts'
-import { requestOpenPath } from './editor/EditorSurface.tsx'
-
-const TABS_SELECTOR = '[data-conversation-tabs] [role="tab"]'
-
-/**
- * Bring the Files view tab into front before the editor opens a path.
- * The tab is the conversation view registered by this plugin, matched by label
- * because the host does not publish a view id on the tab button.
- */
-function activateFilesTab(label: string): boolean {
-  const tabs = document.querySelectorAll<HTMLElement>(TABS_SELECTOR)
-  for (const tab of tabs) {
-    if (tab.textContent?.trim() === label) {
-      tab.click()
-      return true
-    }
-  }
-  return false
-}
+import { fileAddressFor } from './workspace-address.ts'
 
 const ABS_PATH = /^(?:\/|[A-Za-z]:[\\/])/
 const REL_PATH = /^\.\.?[\\/]/
@@ -51,7 +33,8 @@ function candidateFromAnchor(anchor: HTMLAnchorElement): string | null {
  */
 export function installOpenLinksInterceptor(
   scope: ConfigForm<FileExplorerSettings>,
-  filesTabLabel: () => string,
+  getSessionId: () => string | null | undefined,
+  openResource: (address: string) => void,
 ): () => void {
   const onClick = (event: MouseEvent): void => {
     const snap = scope.getSnapshot()
@@ -62,14 +45,11 @@ export function installOpenLinksInterceptor(
     if (!(anchor instanceof HTMLAnchorElement)) return
     const path = candidateFromAnchor(anchor)
     if (path === null) return
+    const sessionId = getSessionId()
+    if (typeof sessionId !== 'string') return
     event.preventDefault()
     event.stopPropagation()
-    // Prefer relative paths as-is; absolute paths are passed through for host setRoot/read failure handling.
-    const relative = ABS_PATH.test(path)
-      ? path.replace(/^\/+/, '').replace(/^[A-Za-z]:[\\/]/, '')
-      : path.replace(/^\.\//, '')
-    activateFilesTab(filesTabLabel())
-    requestOpenPath(relative.replaceAll('\\', '/'))
+    openResource(fileAddressFor(sessionId, undefined, path))
   }
 
   document.addEventListener('click', onClick, true)

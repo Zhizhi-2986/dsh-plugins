@@ -1,6 +1,6 @@
 /** Compact toolbar icons for the explorer header. */
 
-import type { ReactElement } from 'react'
+import type { ReactElement, Ref } from 'react'
 import css from './explorer.module.css'
 
 function IconShell(props: { readonly children: ReactElement; readonly title: string; readonly onClick: () => void; readonly className?: string }): ReactElement {
@@ -25,9 +25,14 @@ const svgProps = {
 }
 
 /** Document with a plus — create an empty text file. */
-export function NewFileIconButton(props: { readonly title: string; readonly onClick: () => void }): ReactElement {
+export function NewFileIconButton(props: {
+  readonly title: string
+  readonly onClick: () => void
+  readonly buttonRef?: Ref<HTMLButtonElement>
+}): ReactElement {
   return (
     <button
+      ref={props.buttonRef}
       type="button"
       className={css.iconBtn}
       title={props.title}
@@ -35,9 +40,11 @@ export function NewFileIconButton(props: { readonly title: string; readonly onCl
       data-file-explorer-create-file=""
       onClick={props.onClick}
     >
-      <svg {...svgProps}>
-        <path d="M4 1.8h5.3L12 4.5v9.7H4z" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round" />
-        <path d="M9.2 1.8v3h2.9M8 8v4m-2-2h4" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+      <svg className={css.toolIcon} viewBox="0 0 20 20" fill="none" aria-hidden="true">
+        <path d="M5 2.25h6.5L15 5.8v8.95H5z" stroke="currentColor" strokeWidth="1.45" strokeLinejoin="round" />
+        <path d="M11.5 2.5v3.4H15" stroke="currentColor" strokeWidth="1.35" strokeLinejoin="round" />
+        <circle cx="14.7" cy="14.7" r="3.4" fill="var(--dsw-alias-bg-layer-1)" stroke="currentColor" strokeWidth="1.35" />
+        <path d="M14.7 12.9v3.6m-1.8-1.8h3.6" stroke="currentColor" strokeWidth="1.35" strokeLinecap="round" />
       </svg>
     </button>
   )

@@ -124,12 +124,6 @@ export function TreeNode(props: TreeNodeProps): ReactElement {
         aria-selected={selected}
         aria-expanded={directory ? expanded : undefined}
         onClick={toggle}
-        onDoubleClick={(event) => {
-          if (directory) return
-          event.stopPropagation()
-          onSelect(entry.path)
-          onOpenFile(entry.path, undefined, true)
-        }}
         onKeyDown={(event) => {
           if (directory && event.key === 'ArrowRight') {
             event.preventDefault()

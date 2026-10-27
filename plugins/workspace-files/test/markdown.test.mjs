@@ -14,3 +14,13 @@ test('preserves normal relative links and formatting', () => {
   assert.match(html, /<strong>hello<\/strong>/u)
   assert.match(html, /href="\.\/docs\/readme\.md"/u)
 })
+
+test('blocks automatic local and remote image requests in workspace previews', () => {
+  const html = renderSafeMarkdown(
+    '![local](../../private.png)\n\n![remote](http://127.0.0.1/trigger)',
+    { blockImages: true },
+  )
+  assert.doesNotMatch(html, /<img\b/u)
+  assert.match(html, /local/u)
+  assert.match(html, /remote/u)
+})

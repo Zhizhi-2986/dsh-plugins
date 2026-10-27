@@ -16,15 +16,11 @@ import type { Context as ClientContext } from '@deepseek-ai/cordis'
 import type { ExplorerApi } from '../rpc.ts'
 import type { TabsStore } from '../state/tabs.ts'
 import type { BuffersStore } from '../state/buffers.ts'
+import { publishPreviewEditorActionState } from '../state/preview-editor-actions.ts'
 import { isMarkdownPath, type MdModeStore } from '../state/md-mode.ts'
 import { useExplorerT } from '../use-explorer-t.ts'
 import { languageForPath, loadMonaco, type MonacoEditorApi } from './monaco-loader.ts'
 import { findOffsets, nextFindOffset, offsetToLineColumn } from './find.ts'
-import { EDITOR_CUSTOM_THEME_ID, EditorAppearanceStore } from './appearance.ts'
-import { applyMonacoAppearance } from './apply-monaco-appearance.ts'
-import { AppearanceMenu } from './AppearanceMenu.tsx'
-import { TabStrip } from './TabStrip.tsx'
-import { MarkdownPreview } from './MarkdownPreview.tsx'
 import css from './editor.module.css'
 
 export interface EditorSurfaceProps {
@@ -33,9 +29,28 @@ export interface EditorSurfaceProps {
   readonly tabs: TabsStore
   readonly buffers: BuffersStore
   readonly mdModes: MdModeStore
+  readonly sessionId?: string
+  readonly actionPlacement?: 'editor-toolbar' | 'preview-toolbar'
+  readonly onSaveAndExit?: (savedContent: string) => void
 }
 
-const appearanceStore = new EditorAppearanceStore()
+type DesktopEditorTheme = 'vs' | 'vs-dark'
+
+function desktopEditorTheme(): DesktopEditorTheme {
+  if (typeof window === 'undefined' || typeof document === 'undefined') return 'vs-dark'
+  const rootStyle = window.getComputedStyle(document.documentElement)
+  const declaredScheme = rootStyle.colorScheme.toLowerCase()
+  if (declaredScheme.includes('light')) return 'vs'
+  if (declaredScheme.includes('dark')) return 'vs-dark'
+
+  const background = window.getComputedStyle(document.body).backgroundColor
+  const channels = background.match(/[\d.]+/gu)?.slice(0, 3).map(Number)
+  if (channels?.length === 3) {
+    const luminance = (channels[0]! * 299 + channels[1]! * 587 + channels[2]! * 114) / 1000
+    return luminance > 150 ? 'vs' : 'vs-dark'
+  }
+  return 'vs-dark'
+}
 
 function revealFindOffset(editor: MonacoEditorApi, text: string, offset: number, length: number): void {
   const start = offsetToLineColumn(text, offset)
@@ -55,7 +70,16 @@ function revealFindOffset(editor: MonacoEditorApi, text: string, offset: number,
  * Multi-tab editor surface bound to explorer RPC + local stores.
  */
 export function EditorSurface(props: EditorSurfaceProps): ReactElement {
-  const { ctx, api, tabs, buffers, mdModes } = props
+  const {
+    ctx,
+    api,
+    tabs,
+    buffers,
+    mdModes,
+    sessionId,
+    actionPlacement = 'editor-toolbar',
+    onSaveAndExit,
+  } = props
   const t = useExplorerT(ctx)
   const tRef = useRef(t)
   tRef.current = t
@@ -64,7 +88,6 @@ export function EditorSurface(props: EditorSurfaceProps): ReactElement {
   useSyncExternalStore(mdModes.subscribe, () => (
     tabState.activePath === null ? 'source' : mdModes.get(tabState.activePath)
   ))
-  const appearance = useSyncExternalStore(appearanceStore.subscribe, appearanceStore.getSnapshot)
 
   const [error, setError] = useState<string | null>(null)
   const [status, setStatus] = useState<string>('')
@@ -74,7 +97,7 @@ export function EditorSurface(props: EditorSurfaceProps): ReactElement {
   const [findPosition, setFindPosition] = useState<number | null>(null)
   const [monacoReady, setMonacoReady] = useState(false)
   const [monacoFailed, setMonacoFailed] = useState(false)
-  const [appearanceOpen, setAppearanceOpen] = useState(false)
+  const [desktopTheme, setDesktopTheme] = useState<DesktopEditorTheme>(desktopEditorTheme)
   const [saving, setSaving] = useState(false)
   const [editingPath, setEditingPath] = useState<string | null>(null)
   const hostRef = useRef<HTMLDivElement | null>(null)
@@ -99,16 +122,41 @@ export function EditorSurface(props: EditorSurfaceProps): ReactElement {
     ? mdModes.get(activePath)
     : 'source'
 
+  useEffect(() => {
+    if (actionPlacement !== 'preview-toolbar' || sessionId === undefined) return
+    publishPreviewEditorActionState(sessionId, { activePath, editing: isEditing, saving })
+  }, [actionPlacement, activePath, isEditing, saving, sessionId])
+
+  useEffect(() => {
+    if (actionPlacement !== 'preview-toolbar' || sessionId === undefined) return
+    return () => publishPreviewEditorActionState(sessionId, { activePath: null, editing: false, saving: false })
+  }, [actionPlacement, sessionId])
 
   useLayoutEffect(() => {
-    appearanceStore.hydrate()
+    const updateTheme = (): void => setDesktopTheme(desktopEditorTheme())
+    updateTheme()
+    const observer = new window.MutationObserver(updateTheme)
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ['class', 'style', 'data-theme'] })
+    observer.observe(document.body, { attributes: true, attributeFilter: ['class', 'style', 'data-theme'] })
+    return () => observer.disconnect()
   }, [])
 
   const openPath = useCallback(async (path: string, edit = false): Promise<void> => {
     tabs.open(path)
-    if (edit && isMarkdownPath(path)) mdModes.set(path, 'source')
+    if (edit) {
+      pendingFocus.current = true
+      if (isMarkdownPath(path)) mdModes.set(path, 'source')
+    }
     if (buffers.get(path) !== undefined) {
       setEditingPath(edit ? path : null)
+      if (edit && activePath === path) {
+        const editor = editorRef.current
+        if (editor !== null) {
+          editor.updateOptions({ readOnly: false })
+          editor.focus()
+          pendingFocus.current = false
+        } else textareaRef.current?.focus()
+      }
       return
     }
     const pending = loadInFlight.current.get(path)
@@ -137,23 +185,23 @@ export function EditorSurface(props: EditorSurfaceProps): ReactElement {
     const loaded = await load
     if (loadInFlight.current.get(path) === load) loadInFlight.current.delete(path)
     if (loaded) setEditingPath(edit ? path : null)
-  }, [api, buffers, mdModes, tabs])
+  }, [activePath, api, buffers, mdModes, tabs])
 
   useEffect(() => {
-    const queued = takePendingOpen()
-    if (queued !== null && queued.path !== activePath) {
+    const queued = takePendingOpen(sessionId)
+    if (queued !== null) {
       if (queued.line !== undefined) {
         pendingJump.current = { path: queued.path, line: queued.line }
         mdModes.set(queued.path, 'source')
       }
       void openPath(queued.path, queued.edit === true)
     }
-  }, [activePath, mdModes, openPath])
+  }, [activePath, mdModes, openPath, sessionId])
 
   useEffect(() => {
     const handler = (event: Event): void => {
-      const detail = (event as CustomEvent<{ path: string; line?: number; edit?: boolean }>).detail
-      if (detail?.path) {
+      const detail = (event as CustomEvent<{ path: string; line?: number; edit?: boolean; sessionId?: string }>).detail
+      if (detail?.path && (detail.sessionId === undefined || detail.sessionId === sessionId)) {
         pendingOpen = null
         if (detail.line !== undefined) {
           pendingJump.current = { path: detail.path, line: detail.line }
@@ -164,7 +212,7 @@ export function EditorSurface(props: EditorSurfaceProps): ReactElement {
     }
     window.addEventListener('file-explorer:open', handler as EventListener)
     return () => window.removeEventListener('file-explorer:open', handler as EventListener)
-  }, [mdModes, openPath])
+  }, [mdModes, openPath, sessionId])
 
   const savePath = useCallback((path: string): Promise<boolean> => {
     const inFlight = saveInFlight.current.get(path)
@@ -226,6 +274,25 @@ export function EditorSurface(props: EditorSurfaceProps): ReactElement {
     await savePath(activePath)
   }, [activePath, buffers, savePath])
 
+  const saveAndExit = useCallback(async (): Promise<void> => {
+    await saveActive()
+    if (activePath === null || buffers.isDirty(activePath)) return
+    setEditingPath(null)
+    const entry = buffers.get(activePath)
+    if (entry !== undefined) onSaveAndExit?.(entry.content)
+  }, [activePath, buffers, onSaveAndExit, saveActive])
+
+  useEffect(() => {
+    if (actionPlacement !== 'preview-toolbar') return
+    const onPreviewSave = (event: Event): void => {
+      const detail = (event as CustomEvent<{ readonly path?: string; readonly sessionId?: string }>).detail
+      if (detail?.path !== activePath || detail.sessionId !== sessionId || !isEditing) return
+      void saveAndExit()
+    }
+    window.addEventListener('file-explorer:save-preview', onPreviewSave)
+    return () => window.removeEventListener('file-explorer:save-preview', onPreviewSave)
+  }, [actionPlacement, activePath, isEditing, saveAndExit, sessionId])
+
   const openFind = useCallback((): void => {
     if (activePath === null) return
     setFindOpen(true)
@@ -234,6 +301,18 @@ export function EditorSurface(props: EditorSurfaceProps): ReactElement {
       findInputRef.current?.select()
     })
   }, [activePath])
+
+  useEffect(() => {
+    if (actionPlacement !== 'preview-toolbar') return
+    const onPreviewFind = (event: Event): void => {
+      const detail = (event as CustomEvent<{ readonly path?: string; readonly sessionId?: string }>).detail
+      if (detail?.path !== activePath || detail.sessionId !== sessionId) return
+      if (findOpen) setFindOpen(false)
+      else openFind()
+    }
+    window.addEventListener('file-explorer:find-preview', onPreviewFind)
+    return () => window.removeEventListener('file-explorer:find-preview', onPreviewFind)
+  }, [actionPlacement, activePath, findOpen, openFind, sessionId])
 
   const moveFind = useCallback((direction: 1 | -1): void => {
     if (activePath === null || findQuery.length === 0) return
@@ -292,26 +371,18 @@ export function EditorSurface(props: EditorSurfaceProps): ReactElement {
       editorRef.current = null
       return
     }
-    if (mdMode === 'preview') {
-      editorRef.current?.dispose()
-      editorRef.current = null
-      return
-    }
-
     let disposed = false
-    const snap = appearanceStore.getSnapshot()
     void loadMonaco().then((monaco) => {
       if (disposed || hostRef.current === null) return
       editorRef.current?.dispose()
       const content = buffers.get(activePath)?.content ?? ''
-      applyMonacoAppearance(monaco, snap)
       const editor = monaco.editor.create(hostRef.current, {
         value: content,
         language: languageForPath(activePath),
         automaticLayout: true,
-        minimap: { enabled: false },
-        fontSize: snap.fontSize,
-        theme: snap.customBackground === null ? snap.theme : EDITOR_CUSTOM_THEME_ID,
+        minimap: { enabled: true, renderCharacters: false },
+        fontSize: 13,
+        theme: desktopTheme,
         scrollBeyondLastLine: false,
         readOnly: !isEditingRef.current,
       })
@@ -347,16 +418,25 @@ export function EditorSurface(props: EditorSurfaceProps): ReactElement {
       editorRef.current?.dispose()
       editorRef.current = null
     }
-  }, [monacoReady, monacoFailed, activePath, mdMode, buffers])
+  }, [monacoReady, monacoFailed, activePath, buffers, desktopTheme])
 
-  // Live-apply theme / custom bg / font without remounting the model.
   useEffect(() => {
-    if (!monacoReady || monacoFailed) return
-    void loadMonaco().then((monaco) => {
-      applyMonacoAppearance(monaco, appearance)
-      editorRef.current?.updateOptions({ fontSize: appearance.fontSize, readOnly: !isEditing })
-    })
-  }, [appearance.theme, appearance.customBackground, appearance.fontSize, monacoReady, monacoFailed, isEditing])
+    editorRef.current?.updateOptions({ readOnly: !isEditing })
+  }, [isEditing])
+
+  useEffect(() => {
+    if (!pendingFocus.current || !isEditing) return
+    const editor = editorRef.current
+    if (editor !== null) {
+      editor.updateOptions({ readOnly: false })
+      editor.focus()
+      pendingFocus.current = false
+      return
+    }
+    if (!monacoFailed || textareaRef.current === null) return
+    textareaRef.current.focus()
+    pendingFocus.current = false
+  }, [activePath, isEditing, monacoFailed, monacoReady])
 
   useEffect(() => {
     if (activePath === null || editorRef.current === null) return
@@ -413,93 +493,53 @@ export function EditorSurface(props: EditorSurfaceProps): ReactElement {
 
   return (
     <div className={css.surface} data-file-explorer-editor="">
-      <TabStrip
-        tabs={tabState.open}
-        activePath={activePath}
-        buffers={buffers}
-        t={t}
-        onActivate={(path) => tabs.activate(path)}
-        onClose={onClose}
-        onClosePaths={onClosePaths}
-      />
       {error !== null ? <div className={css.errorBanner}>{error}</div> : null}
       <div className={css.toolbar}>
-        {!isEditing ? (
-          <button
-            type="button"
-            className={css.toolBtn}
-            onClick={() => {
-              if (isMarkdownPath(activePath)) mdModes.set(activePath, 'source')
-              setEditingPath(activePath)
-              pendingFocus.current = true
-              const editor = editorRef.current
-              if (editor !== null) {
-                editor.updateOptions({ readOnly: false })
-                editor.focus()
-                pendingFocus.current = false
-              }
-            }}
-          >{t('editorEdit')}</button>
-        ) : (
-          <button
-            type="button"
-            className={css.toolBtn}
-            disabled={saving}
-            onClick={() => void saveActive()}
-          >
-            {saving ? t('editorSaving') : t('editorSave')}
-          </button>
-        )}
-        <button
-          type="button"
-          className={findOpen ? `${css.toolBtn} ${css.toolBtnActive}` : css.toolBtn}
-          aria-expanded={findOpen}
-          onClick={() => findOpen ? setFindOpen(false) : openFind()}
-        >{t('editorFind')}</button>
-        {isMarkdownPath(activePath) ? (
-          <>
+        {actionPlacement !== 'preview-toolbar' ? (
+          !isEditing ? (
             <button
               type="button"
-              className={mdMode === 'source' ? `${css.toolBtn} ${css.toolBtnActive}` : css.toolBtn}
-              onClick={() => mdModes.set(activePath, 'source')}
-            >
-              {t('editorSource')}
-            </button>
+              className={css.toolBtn}
+              data-editor-primary-action=""
+              onClick={() => {
+                if (isMarkdownPath(activePath)) mdModes.set(activePath, 'source')
+                pendingFocus.current = true
+                setEditingPath(activePath)
+              }}
+            >{t('editorEdit')}</button>
+          ) : (
             <button
               type="button"
-              className={mdMode === 'preview' ? `${css.toolBtn} ${css.toolBtnActive}` : css.toolBtn}
-              onClick={() => mdModes.set(activePath, 'preview')}
+              className={css.toolBtn}
+              data-editor-primary-action=""
+              disabled={saving}
+              onClick={() => void saveAndExit()}
             >
-              {t('editorPreview')}
+              {saving ? t('editorSaving') : t('editorSave')}
             </button>
-          </>
+          )
         ) : null}
-        <span className={css.status}>
-          {status || (monacoFailed ? t('editorTextareaMode') : '')}
-        </span>
-        <div className={css.toolbarEnd}>
+        {actionPlacement !== 'preview-toolbar' ? (
           <button
             type="button"
-            className={appearanceOpen ? `${css.toolBtn} ${css.toolBtnActive}` : css.toolBtn}
-            aria-expanded={appearanceOpen}
-            aria-haspopup="dialog"
-            onClick={() => setAppearanceOpen((open) => !open)}
+            className={findOpen ? `${css.toolBtn} ${css.toolBtnActive}` : css.toolBtn}
+            aria-label={t('editorFind')}
+            title={t('editorFind')}
+            aria-expanded={findOpen}
+            onClick={() => findOpen ? setFindOpen(false) : openFind()}
           >
-            {t('editorAppearance')}
+            <svg className={css.findIcon} viewBox="0 0 20 20" aria-hidden="true" focusable="false">
+              <circle cx="8.5" cy="8.5" r="5.5" fill="none" stroke="currentColor" strokeWidth="1.7" />
+              <path d="m12.5 12.5 4 4" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
+            </svg>
           </button>
-          {appearanceOpen ? (
-            <AppearanceMenu
-              t={t}
-              appearance={appearance}
-              store={appearanceStore}
-              onClose={() => setAppearanceOpen(false)}
-            />
-          ) : null}
+        ) : null}
+      </div>
+      {actionPlacement !== 'preview-toolbar' ? (
+        <div className={css.pathBar} title={activePath} aria-label={t('editorFilePath')}>
+          {activePath}
         </div>
-      </div>
-      <div className={css.pathBar} title={activePath} aria-label={t('editorFilePath')}>
-        {activePath}
-      </div>
+      ) : null}
       {findOpen ? (
         <div className={css.findBar} role="search">
           <input
@@ -532,26 +572,15 @@ export function EditorSurface(props: EditorSurfaceProps): ReactElement {
       ) : null}
       <div
         className={css.body}
-        onDoubleClick={() => {
-          if (activePath === null || isEditing) return
-          if (isMarkdownPath(activePath)) mdModes.set(activePath, 'source')
-          setEditingPath(activePath)
-        }}
+        data-editor-canvas=""
       >
-        {mdMode === 'preview' ? (
-          <MarkdownPreview content={buffer?.content ?? ''} />
-        ) : monacoReady && !monacoFailed ? (
+        {monacoReady && !monacoFailed ? (
           <div className={css.monacoHost} ref={hostRef} />
         ) : (
           <textarea
             ref={textareaRef}
             className={css.textarea}
-            style={{
-              fontSize: appearance.fontSize,
-              ...(appearance.customBackground !== null
-                ? { background: appearance.customBackground }
-                : {}),
-            }}
+            style={{ colorScheme: desktopTheme === 'vs' ? 'light' : 'dark' }}
             value={buffer?.content ?? ''}
             onChange={(event) => buffers.setContent(activePath, event.target.value)}
             onBlur={() => { if (isEditing) void saveActive() }}
@@ -559,6 +588,13 @@ export function EditorSurface(props: EditorSurfaceProps): ReactElement {
             spellCheck={false}
           />
         )}
+      </div>
+      <div className={css.statusBar} data-editor-status-bar role="status">
+        <span className={css.status}>{status || (monacoFailed ? t('editorTextareaMode') : '')}</span>
+        <span className={css.statusMeta}>
+          <span>{languageForPath(activePath)}</span>
+          <span>UTF-8</span>
+        </span>
       </div>
     </div>
   )
@@ -568,19 +604,22 @@ interface OpenRequest {
   readonly path: string
   readonly line?: number
   readonly edit?: boolean
+  readonly sessionId?: string
 }
 
 let pendingOpen: OpenRequest | null = null
 
-/** Consume a request queued before the editor mounted (e.g. a cross-view jump). */
-function takePendingOpen(): OpenRequest | null {
+/** Consume a queued request only in its target Session's sidebar tab. */
+function takePendingOpen(sessionId?: string): OpenRequest | null {
   const request = pendingOpen
+  if (request !== null && request.sessionId !== undefined && request.sessionId !== sessionId) return null
   pendingOpen = null
   return request
 }
 
-/** Dispatch a cross-component open request, remembered until a view handles it. */
-export function requestOpenPath(path: string, line?: number, edit?: boolean): void {
-  pendingOpen = { path, line, edit }
-  window.dispatchEvent(new CustomEvent('file-explorer:open', { detail: { path, line, edit } }))
+/** Dispatch a Session-scoped open request, remembered until its editor mounts. */
+export function requestOpenPath(path: string, line?: number, edit?: boolean, sessionId?: string): void {
+  const detail = { path, line, edit, sessionId }
+  pendingOpen = detail
+  window.dispatchEvent(new CustomEvent('file-explorer:open', { detail }))
 }

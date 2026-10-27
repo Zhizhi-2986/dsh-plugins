@@ -1,9 +1,10 @@
-import { useState, type ReactElement } from 'react'
+import { useRef, useState, type ReactElement } from 'react'
 import { createPortal } from 'react-dom'
 import type { ExplorerApi } from '../rpc.ts'
 import type { BuffersStore } from '../state/buffers.ts'
 import type { ExplorerTranslate } from '../locales.ts'
 import { applyReplacementPreview, createReplacementPreview, replacementExcerpt, type ReplacementPreview } from './replace-preview.ts'
+import { trapDialogTab } from '../dialog-focus.ts'
 import css from './explorer.module.css'
 
 export function GlobalReplaceDialog(props: {
@@ -21,6 +22,7 @@ export function GlobalReplaceDialog(props: {
   const [applying, setApplying] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [outcomes, setOutcomes] = useState<readonly { path: string; ok: boolean; message?: string }[] | null>(null)
+  const dialogRef = useRef<HTMLElement | null>(null)
 
   const makePreview = async (): Promise<void> => {
     if (previewing || applying) return
@@ -59,11 +61,16 @@ export function GlobalReplaceDialog(props: {
       if (event.target === event.currentTarget && canClose) onClose()
     }}>
       <section
+        ref={dialogRef}
         className={`${css.dialogPanel} ${css.replaceDialog}`}
         role="dialog"
         aria-modal="true"
         aria-labelledby="workspace-replace-title"
-        onKeyDown={(event) => { if (event.key === 'Escape' && canClose) onClose() }}
+        tabIndex={-1}
+        onKeyDown={(event) => {
+          trapDialogTab(event, dialogRef.current)
+          if (event.key === 'Escape' && canClose) onClose()
+        }}
       >
         <h2 id="workspace-replace-title" className={css.dialogTitle}>{t('replaceTitle')}</h2>
         <p className={css.dialogDescription}>{t('replaceHint')}</p>
