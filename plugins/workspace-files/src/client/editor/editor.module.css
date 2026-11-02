@@ -3,6 +3,7 @@
   flex-direction: column;
   height: 100%;
   min-height: 0;
+  position: relative;
   background: var(--dsw-alias-bg-layer-1);
   color: var(--dsw-alias-label-primary);
 }
@@ -532,4 +533,66 @@
   color: var(--dsw-alias-danger, #c44);
   border-bottom: 1px solid var(--dsw-alias-border-l2);
   flex-shrink: 0;
+}
+
+.conflictBanner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 6px 12px;
+  color: var(--dsw-alias-label-primary);
+  border-bottom: 1px solid color-mix(in srgb, var(--dsw-alias-danger, #c44) 45%, var(--dsw-alias-border-l2));
+  background: color-mix(in srgb, var(--dsw-alias-danger, #c44) 9%, transparent);
+  flex-shrink: 0;
+}
+
+.conflictText {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  font-size: 12px;
+}
+
+.conflictText span {
+  color: var(--dsw-alias-label-secondary);
+}
+
+.conflictActions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+}
+
+.confirmDialog {
+  position: absolute;
+  top: 56px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 30;
+  min-width: 280px;
+  max-width: min(88%, 420px);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 16px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 12px;
+  background: var(--dsw-alias-bg-layer-1);
+  box-shadow: 0 12px 32px color-mix(in srgb, var(--dsw-alias-label-primary) 18%, transparent);
+  font-size: 13px;
+}
+
+.confirmDialog strong {
+  font-weight: 600;
+}
+
+.confirmActions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
 }

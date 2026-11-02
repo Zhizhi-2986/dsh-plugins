@@ -32,6 +32,8 @@ export interface EditorSurfaceProps {
   readonly sessionId?: string
   readonly actionPlacement?: 'editor-toolbar' | 'preview-toolbar'
   readonly onSaveAndExit?: (savedContent: string) => void
+  /** Called when editing ends without saving (clean cancel or discarded draft). */
+  readonly onCancelEdit?: () => void
 }
 
 type DesktopEditorTheme = 'vs' | 'vs-dark'
@@ -79,6 +81,7 @@ export function EditorSurface(props: EditorSurfaceProps): ReactElement {
     sessionId,
     actionPlacement = 'editor-toolbar',
     onSaveAndExit,
+    onCancelEdit,
   } = props
   const t = useExplorerT(ctx)
   const tRef = useRef(t)
@@ -100,9 +103,14 @@ export function EditorSurface(props: EditorSurfaceProps): ReactElement {
   const [desktopTheme, setDesktopTheme] = useState<DesktopEditorTheme>(desktopEditorTheme)
   const [saving, setSaving] = useState(false)
   const [editingPath, setEditingPath] = useState<string | null>(null)
+  const [dirtyLeave, setDirtyLeave] = useState(false)
+  const [conflictPath, setConflictPath] = useState<string | null>(null)
+  const [reloadArmed, setReloadArmed] = useState(false)
   const hostRef = useRef<HTMLDivElement | null>(null)
   const textareaRef = useRef<HTMLTextAreaElement | null>(null)
   const findInputRef = useRef<HTMLInputElement | null>(null)
+  const keepEditingRef = useRef<HTMLButtonElement | null>(null)
+  const reloadCancelRef = useRef<HTMLButtonElement | null>(null)
   const editorRef = useRef<MonacoEditorApi | null>(null)
   const loadInFlight = useRef(new Map<string, Promise<boolean>>())
   const saveInFlight = useRef(new Map<string, Promise<boolean>>())
@@ -124,12 +132,17 @@ export function EditorSurface(props: EditorSurfaceProps): ReactElement {
 
   useEffect(() => {
     if (actionPlacement !== 'preview-toolbar' || sessionId === undefined) return
-    publishPreviewEditorActionState(sessionId, { activePath, editing: isEditing, saving })
-  }, [actionPlacement, activePath, isEditing, saving, sessionId])
+    publishPreviewEditorActionState(sessionId, {
+      activePath,
+      editing: isEditing,
+      saving,
+      dirty: isEditing && isDirty,
+    })
+  }, [actionPlacement, activePath, isDirty, isEditing, saving, sessionId])
 
   useEffect(() => {
     if (actionPlacement !== 'preview-toolbar' || sessionId === undefined) return
-    return () => publishPreviewEditorActionState(sessionId, { activePath: null, editing: false, saving: false })
+    return () => publishPreviewEditorActionState(sessionId, { activePath: null, editing: false, saving: false, dirty: false })
   }, [actionPlacement, sessionId])
 
   useLayoutEffect(() => {
@@ -228,16 +241,24 @@ export function EditorSurface(props: EditorSurfaceProps): ReactElement {
         const submittedContent = entry.content
         const result = await api.write(path, submittedContent, entry.version)
         if (!result.ok) {
-          setError(result.error.code === 'CONFLICT' ? tRef.current('editorConflict') : result.error.message)
+          if (result.error.code === 'CONFLICT') {
+            setConflictPath(path)
+            setError(null)
+          } else {
+            setConflictPath(null)
+            setError(result.error.message)
+          }
           setStatus('')
           return false
         }
         buffers.markSaved(path, submittedContent, result.value.version)
+        setConflictPath(null)
         setError(null)
         setStatus(tRef.current('editorSaved'))
         window.setTimeout(() => setStatus(''), 2000)
         return true
       } catch (cause) {
+        setConflictPath(null)
         setError(cause instanceof Error ? cause.message : 'Save failed')
         setStatus('')
         return false
@@ -252,9 +273,64 @@ export function EditorSurface(props: EditorSurfaceProps): ReactElement {
     return operation
   }, [api, buffers])
 
+  /** Leave edit mode; a dirty buffer first asks Save / Discard / Keep editing. */
+  const cancelEdit = useCallback((): void => {
+    if (activePath === null || editingPath !== activePath) return
+    if (!buffers.isDirty(activePath)) {
+      setEditingPath(null)
+      setConflictPath(null)
+      setReloadArmed(false)
+      onCancelEdit?.()
+      return
+    }
+    setDirtyLeave(true)
+  }, [activePath, buffers, editingPath, onCancelEdit])
+
+  /** Copy the draft text to the clipboard so a lost session still keeps it. */
+  const copyDraft = useCallback(async (path: string): Promise<void> => {
+    const entry = buffers.get(path)
+    if (entry === undefined) return
+    try {
+      if (typeof navigator === 'undefined' || navigator.clipboard?.writeText === undefined) {
+        throw new Error('clipboard unavailable')
+      }
+      await navigator.clipboard.writeText(entry.content)
+      setStatus(tRef.current('editorDraftCopied'))
+    } catch {
+      setStatus(tRef.current('editorDraftCopyFailed'))
+    }
+    window.setTimeout(() => setStatus(''), 2000)
+  }, [buffers])
+
+  /** Re-read the on-disk version as a new clean editing baseline (user-confirmed). */
+  const reloadFromDisk = useCallback(async (path: string): Promise<void> => {
+    setReloadArmed(false)
+    try {
+      const result = await api.read(path)
+      if (!result.ok) {
+        setError(result.error.message)
+        return
+      }
+      buffers.load(path, result.value.content, result.value.version)
+      setConflictPath(null)
+      setError(null)
+      setStatus(tRef.current('editorConflictReloadDone'))
+      window.setTimeout(() => setStatus(''), 2000)
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Reload failed')
+    }
+  }, [api, buffers])
+
+  const discardDraft = useCallback((path: string): void => {
+    setDirtyLeave(false)
+    setConflictPath(null)
+    setReloadArmed(false)
+    buffers.drop(path)
+    setEditingPath(null)
+    onCancelEdit?.()
+  }, [buffers, onCancelEdit])
+
   // Refs keep the Monaco lifecycle effect independent of per-render callbacks.
-  const saveRef = useRef(savePath)
-  saveRef.current = savePath
   const isEditingRef = useRef(isEditing)
   isEditingRef.current = isEditing
 
@@ -292,6 +368,17 @@ export function EditorSurface(props: EditorSurfaceProps): ReactElement {
     window.addEventListener('file-explorer:save-preview', onPreviewSave)
     return () => window.removeEventListener('file-explorer:save-preview', onPreviewSave)
   }, [actionPlacement, activePath, isEditing, saveAndExit, sessionId])
+
+  useEffect(() => {
+    if (actionPlacement !== 'preview-toolbar') return
+    const onPreviewCancel = (event: Event): void => {
+      const detail = (event as CustomEvent<{ readonly path?: string; readonly sessionId?: string }>).detail
+      if (detail?.path !== activePath || detail.sessionId !== sessionId) return
+      cancelEdit()
+    }
+    window.addEventListener('file-explorer:cancel-preview', onPreviewCancel)
+    return () => window.removeEventListener('file-explorer:cancel-preview', onPreviewCancel)
+  }, [actionPlacement, activePath, cancelEdit, sessionId])
 
   const openFind = useCallback((): void => {
     if (activePath === null) return
@@ -395,9 +482,6 @@ export function EditorSurface(props: EditorSurfaceProps): ReactElement {
         if (applyingExternal.current) return
         buffers.setContent(activePath, editor.getValue())
       })
-      editor.onDidBlurEditorWidget(() => {
-        if (isEditingRef.current) void saveRef.current(activePath)
-      })
       const jump = pendingJump.current
       if (jump !== null && jump.path === activePath) {
         const line = Math.max(1, Math.min(jump.line, editor.getModel()?.getLineCount() ?? jump.line))
@@ -463,6 +547,21 @@ export function EditorSurface(props: EditorSurfaceProps): ReactElement {
     pendingJump.current = null
   }, [activePath, buffer?.content, buffers, monacoReady, monacoFailed, mdMode])
 
+  useEffect(() => {
+    if (dirtyLeave) keepEditingRef.current?.focus()
+  }, [dirtyLeave])
+
+  useEffect(() => {
+    if (reloadArmed) reloadCancelRef.current?.focus()
+  }, [reloadArmed])
+
+  // Leaving a file or edit mode clears per-file conflict and confirmation state.
+  useEffect(() => {
+    setConflictPath(null)
+    setDirtyLeave(false)
+    setReloadArmed(false)
+  }, [activePath, editingPath])
+
   const dropTab = useCallback((path: string): void => {
     tabs.close(path)
     buffers.drop(path)
@@ -493,7 +592,71 @@ export function EditorSurface(props: EditorSurfaceProps): ReactElement {
 
   return (
     <div className={css.surface} data-file-explorer-editor="">
-      {error !== null ? <div className={css.errorBanner}>{error}</div> : null}
+      {conflictPath === activePath ? (
+        <div className={css.conflictBanner} role="alert" data-editor-conflict="">
+          <div className={css.conflictText}>
+            <strong>{t('editorConflictTitle')}</strong>
+            <span>{t('editorConflict')}</span>
+          </div>
+          <div className={css.conflictActions}>
+            <button type="button" className={css.toolBtn} data-conflict-copy-draft="" onClick={() => void copyDraft(activePath)}>
+              {t('editorCopyDraft')}
+            </button>
+            <button type="button" className={css.toolBtn} data-conflict-reload="" onClick={() => setReloadArmed(true)}>
+              {t('editorReloadDisk')}
+            </button>
+            <button type="button" className={css.toolBtn} data-conflict-keep-editing="" onClick={() => setConflictPath(null)}>
+              {t('editorKeepEditing')}
+            </button>
+          </div>
+        </div>
+      ) : error !== null ? <div className={css.errorBanner}>{error}</div> : null}
+      {dirtyLeave ? (
+        <div
+          className={css.confirmDialog}
+          role="alertdialog"
+          aria-modal="true"
+          aria-label={t('editorUnsavedChanges')}
+          data-dirty-leave-dialog=""
+          onKeyDown={(event) => { if (event.key === 'Escape') setDirtyLeave(false) }}
+        >
+          <strong>{t('editorUnsavedChanges')}</strong>
+          <div className={css.confirmActions}>
+            <button type="button" className={css.toolBtn} data-dirty-confirm-save="" onClick={() => {
+              void saveAndExit().finally(() => setDirtyLeave(false))
+            }}>
+              {t('editorSaveChanges')}
+            </button>
+            <button type="button" className={css.toolBtn} data-dirty-confirm-discard="" onClick={() => discardDraft(activePath)}>
+              {t('editorDiscardChanges')}
+            </button>
+            <button ref={keepEditingRef} type="button" className={css.toolBtn} data-dirty-confirm-keep="" onClick={() => setDirtyLeave(false)}>
+              {t('editorKeepEditing')}
+            </button>
+          </div>
+        </div>
+      ) : null}
+      {reloadArmed ? (
+        <div
+          className={css.confirmDialog}
+          role="alertdialog"
+          aria-modal="true"
+          aria-label={t('editorReloadDisk')}
+          data-reload-dialog=""
+          onKeyDown={(event) => { if (event.key === 'Escape') setReloadArmed(false) }}
+        >
+          <strong>{t('editorReloadDisk')}</strong>
+          <span>{t('editorReloadDiscardsDraft')}</span>
+          <div className={css.confirmActions}>
+            <button type="button" className={css.toolBtn} data-conflict-reload-confirm="" onClick={() => void reloadFromDisk(activePath)}>
+              {t('editorReloadDisk')}
+            </button>
+            <button ref={reloadCancelRef} type="button" className={css.toolBtn} data-conflict-reload-cancel="" onClick={() => setReloadArmed(false)}>
+              {t('editorKeepEditing')}
+            </button>
+          </div>
+        </div>
+      ) : null}
       <div className={css.toolbar}>
         {actionPlacement !== 'preview-toolbar' ? (
           !isEditing ? (
@@ -508,15 +671,24 @@ export function EditorSurface(props: EditorSurfaceProps): ReactElement {
               }}
             >{t('editorEdit')}</button>
           ) : (
-            <button
-              type="button"
-              className={css.toolBtn}
-              data-editor-primary-action=""
-              disabled={saving}
-              onClick={() => void saveAndExit()}
-            >
-              {saving ? t('editorSaving') : t('editorSave')}
-            </button>
+            <>
+              <button
+                type="button"
+                className={css.toolBtn}
+                data-editor-cancel-action=""
+                disabled={saving}
+                onClick={cancelEdit}
+              >{t('editorCancel')}</button>
+              <button
+                type="button"
+                className={css.toolBtn}
+                data-editor-primary-action=""
+                disabled={saving}
+                onClick={() => void saveAndExit()}
+              >
+                {saving ? t('editorSaving') : t('editorSave')}
+              </button>
+            </>
           )
         ) : null}
         {actionPlacement !== 'preview-toolbar' ? (
@@ -583,14 +755,15 @@ export function EditorSurface(props: EditorSurfaceProps): ReactElement {
             style={{ colorScheme: desktopTheme === 'vs' ? 'light' : 'dark' }}
             value={buffer?.content ?? ''}
             onChange={(event) => buffers.setContent(activePath, event.target.value)}
-            onBlur={() => { if (isEditing) void saveActive() }}
             readOnly={!isEditing}
             spellCheck={false}
           />
         )}
       </div>
       <div className={css.statusBar} data-editor-status-bar role="status">
-        <span className={css.status}>{status || (monacoFailed ? t('editorTextareaMode') : '')}</span>
+        <span className={css.status} data-editor-status="">
+          {status || (isEditing && isDirty ? t('editorDirty') : monacoFailed ? t('editorTextareaMode') : '')}
+        </span>
         <span className={css.statusMeta}>
           <span>{languageForPath(activePath)}</span>
           <span>UTF-8</span>

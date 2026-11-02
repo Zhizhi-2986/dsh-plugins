@@ -14,6 +14,16 @@ A Session-scoped workspace search, text editing, file creation, Favorites, and P
 
 Recent history, Favorites additions from file rows, tree-local filtering, and global replacement remain deferred. DSH Desktop RC.2 exposes an additive Files action slot but no supported tree-row context-menu/filter Slot; its public `sidebarRight.openTabs` inventory also lacks a file reactivation event, so this release does not infer Recent from tab membership. The plugin does not inject into private DOM or replace the native tree. Favorites store the absolute workspace root plus relative filenames in the Host-shared profile ConfigForm; those values are visible to authenticated clients of that profile, so use Favorites only where those clients are trusted.
 
+## 0.0.4 scope
+
+Editing reliability and safety (`docs/research/v004-current-state.md` tracks the gap audit):
+
+- **No automatic saves.** Leaving the editor (blur, focus change, Preview switching) never writes; only the explicit **Edit/Save** action writes. The dirty state survives across Preview navigation and is retained per file and Session.
+- **Cancel with a dirty buffer.** The toolbar **Cancel** action (and the same exit paths inside the Preview body) asks **Save / Discard / Keep editing** when unsaved changes exist, with *Keep editing* as the default focus. *Discard* exits editing and drops the draft; the next Edit starts from a fresh read. DSH RC.2 offers no public tab-close interception, so closing the native tab while a dirty buffer exists keeps the draft in the cross-tab buffer store; it is not lost.
+- **Save conflicts.** When Host `write` reports the target changed on disk (`CONFLICT`), the editor keeps the draft and shows a banner with **Copy draft**, **Reload from disk** (confirmed before the in-place rebase), and **Keep editing**.
+- **Dirty indicator.** The editor status strip shows *Unsaved* while the active buffer differs from its saved content.
+- Saves remain versioned (`replaceIfVersion`), all writes pass through the sandbox policy, and editing still starts only from the explicit Edit action; retargeting stays Session/path-bound.
+
 ## Safety and limits
 
 The Host derives workspace scope from DSH's Session `workspaceFileScope`; the Client does not access the local filesystem directly. Writes require a live Session, a sandbox-enforcing filesystem, a workspace-relative path, and the editor's observed version token (limited to 256 characters). The Host also rejects empty or overlong version tokens returned by read/create/write; file creation uses `createIfAbsent`. Quick Open and content search remain bounded. Favorites are capped at 200 entries per normalized lexical workspace-root key and 1,000 across the profile; workspace keys and relative paths are limited to 1,024 characters. Path-component casing is preserved, so case variants on a case-insensitive volume can form separate keys; the cap is per key spelling, not a filesystem-realpath identity. ConfigForm writes use a revision fence, so stale concurrent Favorite updates are rejected and reported rather than overwriting newer entries.

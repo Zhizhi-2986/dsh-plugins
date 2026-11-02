@@ -61,6 +61,19 @@ export type ExplorerKey =
   | 'searchEnterQuery'
   | 'editorEdit'
   | 'editorEditAction'
+  | 'editorCancel'
+  | 'editorDirty'
+  | 'editorUnsavedChanges'
+  | 'editorSaveChanges'
+  | 'editorDiscardChanges'
+  | 'editorKeepEditing'
+  | 'editorConflictTitle'
+  | 'editorCopyDraft'
+  | 'editorDraftCopied'
+  | 'editorDraftCopyFailed'
+  | 'editorReloadDisk'
+  | 'editorReloadDiscardsDraft'
+  | 'editorConflictReloadDone'
   | 'editorReadFailed'
   | 'codePreviewCopy'
   | 'codePreviewCopied'
@@ -177,6 +190,19 @@ const zh: Record<ExplorerKey, string> = {
   searchEnterQuery: '输入文字搜索文件内容',
   editorEdit: '编辑文件',
   editorEditAction: '编辑',
+  editorCancel: '取消编辑',
+  editorDirty: '未保存',
+  editorUnsavedChanges: '有未保存的修改',
+  editorSaveChanges: '保存',
+  editorDiscardChanges: '放弃修改',
+  editorKeepEditing: '继续编辑',
+  editorConflictTitle: '文件已在磁盘上被修改',
+  editorCopyDraft: '复制草稿',
+  editorDraftCopied: '草稿已复制',
+  editorDraftCopyFailed: '无法复制草稿，请选中文本后手动复制。',
+  editorReloadDisk: '重新加载',
+  editorReloadDiscardsDraft: '重新加载会丢弃当前未保存的修改。确定继续？',
+  editorConflictReloadDone: '已重新加载磁盘版本',
   editorReadFailed: '无法读取文件以开始编辑；请检查会话后重试。',
   codePreviewCopy: '复制',
   codePreviewCopied: '已复制',
@@ -291,6 +317,19 @@ const en: Record<ExplorerKey, string> = {
   searchEnterQuery: 'Enter text to search file contents',
   editorEdit: 'Edit file',
   editorEditAction: 'Edit',
+  editorCancel: 'Cancel editing',
+  editorDirty: 'Unsaved',
+  editorUnsavedChanges: 'Unsaved changes',
+  editorSaveChanges: 'Save',
+  editorDiscardChanges: 'Discard changes',
+  editorKeepEditing: 'Keep editing',
+  editorConflictTitle: 'The file changed on disk',
+  editorCopyDraft: 'Copy draft',
+  editorDraftCopied: 'Draft copied',
+  editorDraftCopyFailed: 'Could not copy the draft; select the text and copy manually.',
+  editorReloadDisk: 'Reload from disk',
+  editorReloadDiscardsDraft: 'Reloading discards your unsaved changes. Continue?',
+  editorConflictReloadDone: 'Reloaded the on-disk version',
   editorReadFailed: 'Could not read this file for editing. Check the Session and retry.',
   codePreviewCopy: 'Copy',
   codePreviewCopied: 'Copied',

@@ -35,14 +35,18 @@ function button(label) {
   return [...document.querySelectorAll('button')].find((item) => item.textContent === label || item.getAttribute('aria-label') === label)
 }
 
-async function mountEditor({ path = 'note.md', content = 'Hello **world**', sessionId, request = true } = {}) {
+async function mountEditor({ path = 'note.md', content = 'Hello **world**', sessionId, request = true, api: apiOverride } = {}) {
   dom.window.require = undefined
   const tabs = new TabsStore()
   const buffers = new BuffersStore()
   const mdModes = new MdModeStore()
   const writes = []
-  const api = {
-    read: async () => ({ ok: true, value: { content, version: 'v1' } }),
+  const reads = []
+  const api = apiOverride ?? {
+    read: async () => {
+      reads.push(path)
+      return { ok: true, value: { content, version: 'v1' } }
+    },
     write: async (...args) => {
       writes.push(args)
       return { ok: true, value: { version: `v${writes.length + 1}` } }
@@ -54,7 +58,7 @@ async function mountEditor({ path = 'note.md', content = 'Hello **world**', sess
   if (request) await act(async () => requestOpenPath(path, undefined, false, sessionId))
   await flush()
   return {
-    path, root, tabs, buffers, mdModes, writes,
+    path, root, tabs, buffers, mdModes, writes, reads,
     cleanup: async () => { await act(async () => root.unmount()); document.getElementById('app').replaceChildren() },
   }
 }
@@ -224,14 +228,185 @@ test('Ctrl/Cmd+S saves the dirty buffer', async () => {
   } finally { await view.cleanup() }
 })
 
-test('blurring the editor saves unsaved changes', async () => {
+test('blurring the editor keeps unsaved changes and does not write', async () => {
   const view = await mountEditor({ path: 'blur.txt', content: 'one' })
   try {
     await act(async () => button('Edit file').click())
     const textarea = await typeIntoTextarea('two')
     // React delegates onBlur through the bubbling focusout event.
     await act(async () => fire(textarea, 'focusout'))
-    assert.deepEqual(view.writes[0]?.slice(0, 3), ['blur.txt', 'two', 'v1'])
+    assert.equal(view.writes.length, 0, 'blur must not auto-save')
+    assert.equal(view.buffers.isDirty('blur.txt'), true)
+    assert.equal(document.querySelector('textarea').readOnly, false, 'still editing after blur')
+    assert.match(document.querySelector('[data-file-explorer-editor]').textContent, /未保存|Unsaved/u)
+  } finally { await view.cleanup() }
+})
+
+test('Cancel exits edit mode without writing when the buffer is clean', async () => {
+  const view = await mountEditor({ path: 'cancel-clean.txt', content: 'pristine' })
+  try {
+    await act(async () => button('Edit file').click())
+    assert.ok(button('Cancel editing'), 'cancel action exists while editing')
+    await act(async () => button('Cancel editing').click())
+    await flush()
+    assert.equal(view.writes.length, 0)
+    assert.ok(button('Edit file'), 'cancel returns to preview')
+    assert.equal(document.querySelector('textarea').readOnly, true)
+  } finally { await view.cleanup() }
+})
+
+test('Cancel with a dirty buffer asks Save / Discard / Keep editing and keeps editing by default', async () => {
+  const view = await mountEditor({ path: 'dirty-cancel.txt', content: 'base' })
+  try {
+    await act(async () => button('Edit file').click())
+    await typeIntoTextarea('draft text')
+    await act(async () => button('Cancel editing').click())
+    const dialog = document.querySelector('[data-dirty-leave-dialog]')
+    assert.ok(dialog, 'dirty leave confirmation should appear')
+    assert.equal(document.activeElement?.getAttribute('data-dirty-confirm-keep'), '', 'keep editing is the default focus')
+    assert.ok(document.querySelector('[data-dirty-confirm-save]'))
+    assert.ok(document.querySelector('[data-dirty-confirm-discard]'))
+    await act(async () => document.querySelector('[data-dirty-confirm-keep]').click())
+    assert.equal(document.querySelector('[data-dirty-leave-dialog]'), null)
+    assert.equal(view.writes.length, 0)
+    assert.equal(document.querySelector('textarea').readOnly, false, 'keep editing stays in the editor')
+    assert.equal(view.buffers.isDirty('dirty-cancel.txt'), true)
+  } finally { await view.cleanup() }
+})
+
+test('discarding the draft from the dirty leave dialog exits editing and drops the buffer', async () => {
+  const view = await mountEditor({ path: 'discard.txt', content: 'original' })
+  try {
+    await act(async () => button('Edit file').click())
+    await typeIntoTextarea('draft that will be dropped')
+    await act(async () => button('Cancel editing').click())
+    await act(async () => document.querySelector('[data-dirty-confirm-discard]').click())
+    await flush()
+    assert.equal(view.writes.length, 0)
+    assert.equal(view.buffers.get('discard.txt'), undefined, 'discarded buffer is dropped')
+    assert.ok(button('Edit file'), 'discard returns to preview')
+  } finally { await view.cleanup() }
+})
+
+test('saving from the dirty leave dialog writes and exits edit mode', async () => {
+  const view = await mountEditor({ path: 'leave-save.txt', content: 'v0' })
+  try {
+    await act(async () => button('Edit file').click())
+    await typeIntoTextarea('v1 content')
+    await act(async () => button('Cancel editing').click())
+    await act(async () => document.querySelector('[data-dirty-confirm-save]').click())
+    await flush()
+    assert.deepEqual(view.writes[0]?.slice(0, 3), ['leave-save.txt', 'v1 content', 'v1'])
+    assert.equal(view.buffers.isDirty('leave-save.txt'), false)
+    assert.ok(button('Edit file'), 'save-and-exit returns to preview')
+  } finally { await view.cleanup() }
+})
+
+test('a CONFLICT save keeps the draft and supports keep editing, reload, and a fresh versioned save', async () => {
+  const reads = []
+  const writes = []
+  const api = {
+    read: async () => {
+      reads.push('read')
+      return { ok: true, value: { content: reads.length === 1 ? 'baseline content' : 'on disk now', version: reads.length === 1 ? 'v1' : 'v9' } }
+    },
+    write: async (...args) => {
+      writes.push(args)
+      return writes.length < 4
+        ? { ok: false, error: { kind: 'business', code: 'CONFLICT', message: 'file changed on disk; reload it before saving' } }
+        : { ok: true, value: { version: 'v10' } }
+    },
+  }
+  const view = await mountEditor({ path: 'conflict.md', content: 'ignored', request: false, api })
+  try {
+    await act(async () => requestOpenPath('conflict.md', undefined, true, undefined))
+    await flush()
+    assert.equal(view.buffers.get('conflict.md')?.content, 'baseline content')
+    await typeIntoTextarea('my draft')
+    await act(async () => button('Save').click())
+    await flush()
+    const banner = document.querySelector('[data-editor-conflict]')
+    assert.ok(banner, 'conflict banner should appear')
+    assert.match(banner.textContent, /file changed on disk|文件已在磁盘上被修改/iu)
+    assert.equal(document.querySelector('textarea').readOnly, false, 'draft stays editable')
+    assert.equal(view.buffers.get('conflict.md')?.content, 'my draft')
+    assert.ok(document.querySelector('[data-conflict-copy-draft]'))
+    assert.ok(document.querySelector('[data-conflict-reload]'))
+
+    // keep editing dismisses the banner without touching the buffer
+    await act(async () => document.querySelector('[data-conflict-keep-editing]').click())
+    assert.equal(document.querySelector('[data-editor-conflict]'), null)
+    assert.equal(view.buffers.get('conflict.md')?.content, 'my draft')
+
+    // reload confirm can be cancelled
+    await act(async () => button('Save').click())
+    await flush()
+    await act(async () => document.querySelector('[data-conflict-reload]').click())
+    assert.ok(document.querySelector('[data-reload-dialog]'))
+    await act(async () => document.querySelector('[data-conflict-reload-cancel]').click())
+    assert.equal(document.querySelector('[data-reload-dialog]'), null)
+
+    // confirmed reload re-reads the disk version as a clean editing baseline
+    await act(async () => button('Save').click())
+    await flush()
+    await act(async () => document.querySelector('[data-conflict-reload]').click())
+    await act(async () => document.querySelector('[data-conflict-reload-confirm]').click())
+    await flush()
+    assert.equal(reads.length, 2)
+    assert.equal(view.buffers.get('conflict.md')?.content, 'on disk now')
+    assert.equal(view.buffers.get('conflict.md')?.version, 'v9')
+    assert.equal(view.buffers.isDirty('conflict.md'), false, 'reload rebases to a clean baseline')
+    assert.equal(document.querySelector('[data-editor-conflict]'), null)
+    assert.equal(document.querySelector('textarea').readOnly, false, 'still editing after reload')
+
+    // the next save is a fresh versioned write against the new baseline
+    await typeIntoTextarea('after reload edit')
+    await act(async () => button('Save').click())
+    await flush()
+    assert.equal(writes.length, 4)
+    assert.deepEqual(writes[0]?.slice(0, 3), ['conflict.md', 'my draft', 'v1'])
+    assert.deepEqual(writes[3]?.slice(0, 4), ['conflict.md', 'after reload edit', 'v9'])
+  } finally { await view.cleanup() }
+})
+
+test('copying the draft from the conflict banner writes the buffer to the clipboard', async () => {
+  let copied = ''
+  Object.defineProperty(globalThis.navigator, 'clipboard', {
+    configurable: true,
+    value: { writeText: async (text) => { copied = text } },
+  })
+  const api = {
+    read: async () => ({ ok: true, value: { content: 'baseline', version: 'v1' } }),
+    write: async () => ({ ok: false, error: { kind: 'business', code: 'CONFLICT', message: 'file changed on disk; reload it before saving' } }),
+  }
+  const view = await mountEditor({ path: 'copy-draft.md', content: 'ignored', request: false, api })
+  try {
+    await act(async () => requestOpenPath('copy-draft.md', undefined, true, undefined))
+    await flush()
+    await typeIntoTextarea('draft to copy')
+    await act(async () => button('Save').click())
+    await flush()
+    assert.ok(document.querySelector('[data-editor-conflict]'))
+    await act(async () => document.querySelector('[data-conflict-copy-draft]').click())
+    await flush()
+    assert.equal(copied, 'draft to copy')
+    assert.match(document.querySelector('[data-editor-status]')?.textContent ?? '', /Draft copied|草稿已复制/u)
+  } finally {
+    await view.cleanup()
+    delete globalThis.navigator.clipboard
+  }
+})
+
+test('status bar shows the dirty indicator while editing', async () => {
+  const view = await mountEditor({ path: 'dirty-status.txt', content: 'clean' })
+  try {
+    assert.equal(document.querySelector('[data-editor-status]')?.textContent, '')
+    await act(async () => button('Edit file').click())
+    await typeIntoTextarea('changed')
+    assert.match(document.querySelector('[data-editor-status]')?.textContent ?? '', /未保存|Unsaved/u)
+    await act(async () => button('Save').click())
+    await flush()
+    assert.ok(button('Edit file'), 'save exits edit mode')
   } finally { await view.cleanup() }
 })
 

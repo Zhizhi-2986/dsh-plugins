@@ -51,6 +51,7 @@ const copy = {
   tabClose: 'Close tab',
   editorEdit: 'Edit file',
   editorEditAction: 'Edit',
+  editorCancel: 'Cancel editing',
   editorReadFailed: 'Could not read this file for editing. Check the Session and retry.',
   editorFind: 'Find',
   codePreviewCopy: 'Copy',
@@ -302,12 +303,20 @@ test('native Markdown and Code edit directly in the Preview body', async () => {
       assert.equal(document.querySelector('[data-workspace-document-edit-dialog]'), null)
       assert.ok(document.querySelector(`[data-workspace-${mode}-editor]`))
       assert.equal(actionButton.textContent.trim(), copy.editorSave)
+      const cancelAction = document.querySelector('[data-workspace-document-cancel-action]')
+      assert.ok(cancelAction, 'cancel action exists while editing')
       const findButton = document.querySelector('[data-workspace-document-find-action]')
       assert.ok(findButton)
       await act(async () => findButton.click())
       assert.ok(document.querySelector('[data-file-explorer-editor] [role="search"]'))
       await act(async () => document.querySelector(`[data-file-explorer-editor] [aria-label="${copy.editorFindClose}"]`).click())
+      await act(async () => cancelAction.click())
+      await flush(40)
+      assert.equal(document.querySelector(`[data-workspace-${mode}-editor]`), null, 'cancel returns to the native Preview body')
+      assert.equal(calls.writes.length, 0, 'cancelling a clean buffer does not write')
 
+      await act(async () => actionButton.click())
+      await flush(40)
       const textarea = document.querySelector(`[data-workspace-${mode}-editor] textarea`)
       assert.ok(textarea)
       await act(async () => Simulate.change(textarea, { target: { value: `edited ${mode}` } }))
@@ -499,6 +508,143 @@ test('stale Edit read failure is not shown for a retargeted Preview', async () =
     assert.equal(document.querySelector('[data-workspace-document-edit-dialog]'), null)
     assert.equal(document.querySelector('[data-workspace-document-edit-action]')?.textContent.trim(), copy.editorEditAction)
     assert.deepEqual(calls.read, [{ sessionId, path: 'docs/first.md' }])
+  } finally {
+    await harness.unmount()
+    document.getElementById('app').replaceChildren()
+  }
+})
+
+test('native Cancel with a dirty buffer asks Save / Discard / Keep editing in the Preview body', async () => {
+  const { ctx, calls } = createContext()
+  const sessionId = 'native-dirty-cancel-session'
+  const path = 'docs/dirty-cancel.md'
+  const resourceAddress = `dsh-resource://file/session/${sessionId}/${path}`
+  const harness = mount(React.createElement(React.Fragment, null,
+    React.createElement(WorkspaceDocumentEditAction, {
+      ctx,
+      sessionId,
+      content: { kind: 'text', text: 'base', eof: true },
+      useTabInfo: () => ({ tab: { contentId: resourceAddress, navigation: { params: {} } } }),
+      t,
+    }),
+    React.createElement(WorkspaceMarkdownBody, {
+      ctx,
+      sessionId,
+      resourceAddress,
+      content: { kind: 'text', text: 'base', eof: true },
+      t,
+    }),
+  ))
+  try {
+    await harness.render()
+    await act(async () => document.querySelector('[data-workspace-document-edit-action]').click())
+    await flush(40)
+    const textarea = document.querySelector('[data-workspace-markdown-editor] textarea')
+    assert.ok(textarea)
+    await act(async () => Simulate.change(textarea, { target: { value: 'draft draft' } }))
+
+    await act(async () => document.querySelector('[data-workspace-document-cancel-action]').click())
+    await flush(40)
+    const dialog = document.querySelector('[data-dirty-leave-dialog]')
+    assert.ok(dialog, 'dirty leave confirmation appears in the Preview body editor')
+    assert.equal(document.activeElement?.getAttribute('data-dirty-confirm-keep'), '', 'keep editing is the default focus')
+
+    await act(async () => document.querySelector('[data-dirty-confirm-keep]').click())
+    await flush(20)
+    assert.equal(document.querySelector('[data-dirty-leave-dialog]'), null)
+    assert.ok(document.querySelector('[data-workspace-markdown-editor]'), 'keep editing stays in the editor')
+    assert.equal(calls.writes.length, 0)
+
+    await act(async () => document.querySelector('[data-workspace-document-cancel-action]').click())
+    await flush(20)
+    await act(async () => document.querySelector('[data-dirty-confirm-save]').click())
+    await flush(40)
+    assert.deepEqual(calls.writes, [{ sessionId, path, content: 'draft draft', expectedVersion: 'v1' }])
+    assert.equal(document.querySelector('[data-workspace-markdown-editor]'), null)
+    assert.ok(document.querySelector('[data-workspace-markdown-body]'), 'save-and-exit returns to the Preview body')
+    assert.equal(document.querySelector('[data-workspace-document-edit-action]')?.textContent.trim(), copy.editorEditAction)
+  } finally {
+    await harness.unmount()
+    document.getElementById('app').replaceChildren()
+  }
+})
+
+test('native Markdown CONFLICT keeps the draft and reload re-bases on the disk version', async () => {
+  const { ctx, calls } = createContext()
+  const sessionId = 'native-conflict-session'
+  const path = 'docs/conflict.md'
+  const resourceAddress = `dsh-resource://file/session/${sessionId}/${path}`
+  let reads = 0
+  ctx.remote.explorerFs.read = async (readSessionId, readPath) => {
+    calls.read.push({ sessionId: readSessionId, path: readPath })
+    reads += 1
+    return {
+      ok: true,
+      value: {
+        ok: true,
+        content: reads === 1 ? 'baseline' : 'on-disk v9',
+        version: reads === 1 ? 'v1' : 'v9',
+      },
+    }
+  }
+  ctx.remote.explorerFs.write = async (writeSessionId, writePath, content, expectedVersion) => {
+    calls.writes.push({ sessionId: writeSessionId, path: writePath, content, expectedVersion })
+    return calls.writes.length === 1
+      ? { ok: true, value: { ok: false, code: 'CONFLICT', message: 'file changed on disk; reload it before saving' } }
+      : { ok: true, value: { ok: true, version: 'v10' } }
+  }
+  const stores = editorStoresForSession(sessionId)
+  const harness = mount(React.createElement(React.Fragment, null,
+    React.createElement(WorkspaceDocumentEditAction, {
+      ctx,
+      sessionId,
+      content: { kind: 'text', text: 'baseline', eof: true },
+      useTabInfo: () => ({ tab: { contentId: resourceAddress, navigation: { params: {} } } }),
+      t,
+    }),
+    React.createElement(WorkspaceMarkdownBody, {
+      ctx,
+      sessionId,
+      resourceAddress,
+      content: { kind: 'text', text: 'baseline', eof: true },
+      t,
+    }),
+  ))
+  try {
+    await harness.render()
+    await act(async () => document.querySelector('[data-workspace-document-edit-action]').click())
+    await flush(40)
+    const textarea = document.querySelector('[data-workspace-markdown-editor] textarea')
+    assert.ok(textarea)
+    await act(async () => Simulate.change(textarea, { target: { value: 'my draft' } }))
+    await act(async () => document.querySelector('[data-workspace-document-edit-action]').click())
+    await flush(40)
+
+    const banner = document.querySelector('[data-editor-conflict]')
+    assert.ok(banner, 'conflict banner appears inside the Preview body editor')
+    assert.equal(stores.buffers.get(path)?.content, 'my draft', 'draft survives the CONFLICT')
+    assert.equal(stores.buffers.isDirty(path), true)
+
+    await act(async () => document.querySelector('[data-conflict-reload]').click())
+    assert.ok(document.querySelector('[data-reload-dialog]'), 'reload asks for confirmation')
+    await act(async () => document.querySelector('[data-conflict-reload-confirm]').click())
+    await flush(40)
+
+    assert.equal(reads, 2, 'reload re-reads the disk version')
+    assert.equal(stores.buffers.get(path)?.content, 'on-disk v9')
+    assert.equal(stores.buffers.get(path)?.version, 'v9')
+    assert.equal(stores.buffers.isDirty(path), false, 'reload rebases to a clean baseline')
+    assert.equal(document.querySelector('[data-editor-conflict]'), null)
+    assert.ok(document.querySelector('[data-workspace-markdown-editor]'), 'still editing after reload')
+
+    await act(async () => Simulate.change(document.querySelector('[data-workspace-markdown-editor] textarea'), { target: { value: 'second edit' } }))
+    await act(async () => document.querySelector('[data-workspace-document-edit-action]').click())
+    await flush(40)
+    assert.deepEqual(calls.writes, [
+      { sessionId, path, content: 'my draft', expectedVersion: 'v1' },
+      { sessionId, path, content: 'second edit', expectedVersion: 'v9' },
+    ])
+    assert.ok(document.querySelector('[data-workspace-markdown-body]'), 'successful save returns to the Preview body')
   } finally {
     await harness.unmount()
     document.getElementById('app').replaceChildren()

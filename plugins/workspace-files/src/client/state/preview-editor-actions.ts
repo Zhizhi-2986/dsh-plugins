@@ -2,11 +2,13 @@ export interface PreviewEditorActionState {
   readonly activePath: string | null
   readonly editing: boolean
   readonly saving: boolean
+  /** True while the active buffer differs from its saved baseline. */
+  readonly dirty: boolean
 }
 
 export type PreviewEditorActionListener = () => void
 
-const EMPTY_STATE: PreviewEditorActionState = { activePath: null, editing: false, saving: false }
+const EMPTY_STATE: PreviewEditorActionState = { activePath: null, editing: false, saving: false, dirty: false }
 const states = new Map<string, PreviewEditorActionState>()
 const listeners = new Map<string, Set<PreviewEditorActionListener>>()
 
@@ -42,8 +44,9 @@ export function publishPreviewEditorActionState(
     previous.activePath === state.activePath
     && previous.editing === state.editing
     && previous.saving === state.saving
+    && previous.dirty === state.dirty
   ) return
-  if (state.activePath === null && !state.editing && !state.saving) states.delete(sessionId)
+  if (state.activePath === null && !state.editing && !state.saving && !state.dirty) states.delete(sessionId)
   else states.set(sessionId, state)
   for (const listener of listeners.get(sessionId) ?? []) listener()
 }

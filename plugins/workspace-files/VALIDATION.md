@@ -48,4 +48,38 @@ Favorites store the absolute workspace root plus relative filenames in the Host-
 
 A concurrent ancestor-symlink swap between path validation and later path-based filesystem access remains within DSH RC.2's documented TOCTOU limitation. Use only trusted, non-concurrently modified local workspaces. This restriction is documented, not enforced by a runtime toggle. Recent remains deferred as noted above.
 
+# DSH Workspace Enhanced 0.0.4 — editing lifecycle iteration evidence
+
+**Target:** same DSH Desktop 2.0.18 / DSH 0.2.1-rc.2 surface as 0.0.3. Iteration scope: editing reliability & safety (v0.0.4 of the optimization spec). The gap audit lives in [`docs/research/v004-current-state.md`](../docs/research/v004-current-state.md) (repository root).
+
+## 0.0.4 behavior verified
+
+| Guarantee | Evidence |
+|---|---|
+| Leaving the editor never writes: blurring the textarea keeps the unsaved buffer and the editor stays in edit mode with the status strip showing *Unsaved*. | `test/editor-ui.test.mjs` |
+| A clean **Cancel** exits edit mode and returns to the read-only preview without any write, from both the editor toolbar and the native Preview edit action. | `test/editor-ui.test.mjs`, `test/native-files-enhancements.test.mjs` |
+| Cancelling with a dirty buffer opens the **Save / Discard / Keep editing** dialog with *Keep editing* as default focus; *Keep* stays in the editor, *Discard* drops the draft and returns to preview, *Save* writes with the observed version and exits. | `test/editor-ui.test.mjs`, `test/native-files-enhancements.test.mjs` |
+| A `CONFLICT` save keeps the draft editable and shows the banner with **Copy draft** (clipboard), **Reload from disk** (confirmed; cancelling keeps editing), and **Keep editing**; the reload re-reads the disk version as a clean baseline and the next save is a fresh versioned write. | `test/editor-ui.test.mjs`, `test/native-files-enhancements.test.mjs` |
+| The status strip reports the dirty indicator; after a successful save the editor returns to preview. | `test/editor-ui.test.mjs` |
+| Existing guarantees hold unchanged: versioned saves, Session/path-bound retarget behavior, stale-read suppression, native Markdown/Code/Plain Text inline editing, guarded create, and Favorites/Search/Quick Open remain covered and green. | full suite below |
+
+## Reproducible checks
+
+- `pnpm --filter dsh-workspace-enhanced test` — **197 passing, 0 failures** (includes the TypeScript compile stage).
+- `pnpm --filter dsh-workspace-enhanced exec tsc -p tsconfig.json --noEmit` — passed.
+- `pnpm --filter dsh-workspace-enhanced build` — passed; Client bundle 421.97 kB (94.07 kB gzip).
+- `git diff --check` — passed.
+- No live Desktop visual test: the running Desktop instance was not restarted (macOS Automation permission), consistent with 0.0.3.
+
+## RED → GREEN evidence (v0.0.4)
+
+- The inherited blur-auto-save test first passed the old behavior (write on `focusout`); it was inverted to assert **no write and still editing**, then the implementation removed the blur handlers. G1 in the audit ([`docs/research/v004-current-state.md`](../docs/research/v004-current-state.md)).
+- The new Cancel/dirty-dialog tests first failed because no Cancel action existed and no dialog rendered; the toolbar action, dirty-leave dialog (default focus on *Keep editing*), discard, and dialog-save paths were added. G2.
+- The conflict tests first failed with only an error banner; the banner, copy-draft, reload-with-confirmation, and keep-editing affordances were added. G3.
+- The dirty-indicator assertion first failed with an empty status strip; the publish state now carries `dirty` and the strip renders *Unsaved*. G4.
+
+## Deferred or bounded (unchanged context)
+
+DSH RC.2 offers no public file-change event and no tab-close interception hook, so dirty buffers survive a native tab close (the draft is retained); this is documented in `docs/research/v004-current-state.md` (RC.2 limit) and in the README. The residual ancestor-symlink TOCTOU window from 0.0.3 remains the same documented deployment restriction — no atomic no-follow guarantee exists in RC.2.
+
 The `desktop` profile already links this package to the local workspace, so the rebuilt bundle is available at the linked package path. The requested Desktop restart was blocked by macOS Automation permission (`osascript` returned -10004); the running app was not restarted, so live behavior remains unverified. No Desktop profile change, commit, or push was performed.

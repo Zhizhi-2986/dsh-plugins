@@ -418,6 +418,7 @@ function WorkspaceDocumentBody(props: WorkspaceDocumentBodyProps): ReactElement 
             })
             editor.setEditing(false)
           }}
+          onCancelEdit={() => editor.setEditing(false)}
         />
       </div>
     )
@@ -485,6 +486,10 @@ export function WorkspaceDocumentEditAction(
     if (!editing || busy || saving) return
     window.dispatchEvent(new CustomEvent('file-explorer:save-preview', { detail: { path, sessionId } }))
   }
+  const cancelEditor = (): void => {
+    if (!editing || busy || saving) return
+    window.dispatchEvent(new CustomEvent('file-explorer:cancel-preview', { detail: { path, sessionId } }))
+  }
   const openFind = (): void => {
     if (!editorOpen) return
     window.dispatchEvent(new CustomEvent('file-explorer:find-preview', { detail: { path, sessionId } }))
@@ -521,6 +526,19 @@ export function WorkspaceDocumentEditAction(
       >
         {actionLabel}
       </button>
+      {editing ? (
+        <button
+          type="button"
+          className={css.documentCancelButton}
+          aria-label={t('editorCancel')}
+          title={t('editorCancel')}
+          disabled={busy || saving}
+          data-workspace-document-cancel-action=""
+          onClick={cancelEditor}
+        >
+          {t('editorCancel')}
+        </button>
+      ) : null}
       {error === null ? null : <span className={css.documentActionError} role="alert">{error}</span>}
     </div>
   )
