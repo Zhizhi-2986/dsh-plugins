@@ -75,13 +75,37 @@ test('Desktop-marked macOS Web transport handles Option+Shift+digit from editabl
   assert.equal(disposed, true)
 })
 
-test('does not install local bindings outside the installed macOS Desktop Web transport', () => {
+test('Desktop-marked macOS shell with desktop runtime handles Option+Shift+digit', () => {
+  window.dshDesktop = { protocolVersion: 1 }
+  const clicks = mountTabs()
+  let listener
+  let disposed = false
+  const ctx = { shortcuts: { runtime: 'desktop', observeFixedInput(callback) {
+    listener = callback
+    return () => { disposed = true }
+  } } }
+  const dispose = installDesktopViewShortcuts(ctx)
+  try {
+    assert.equal(typeof listener, 'function')
+    const shortcut = input('Digit2')
+    listener(shortcut.event)
+    assert.equal(clicks(), 1)
+    assert.equal(shortcut.consumed(), 1)
+  } finally {
+    dispose()
+    delete window.dshDesktop
+  }
+  assert.equal(disposed, true)
+})
+
+test('does not install local bindings outside the installed macOS Desktop shell', () => {
   let registrations = 0
   const ctx = { shortcuts: { runtime: 'web', observeFixedInput() { registrations += 1; return () => {} } } }
   for (const [bridge, platform, runtime] of [
     [undefined, 'MacIntel', 'web'],
     [{ protocolVersion: 1 }, 'Win32', 'web'],
-    [{ protocolVersion: 1 }, 'MacIntel', 'desktop'],
+    [{ protocolVersion: 1 }, 'Linux x86_64', 'web'],
+    [{ protocolVersion: 1 }, 'MacIntel', 'tui'],
   ]) {
     if (bridge === undefined) delete window.dshDesktop
     else window.dshDesktop = bridge

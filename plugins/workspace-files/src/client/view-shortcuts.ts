@@ -5,16 +5,20 @@ import type { Context as ClientContext } from '@deepseek-ai/cordis'
 const TABS_SELECTOR = '[data-conversation-tabs] [role="tab"]'
 const MAX_TABS = 9
 
-// The installed Desktop shell exposes its preload marker but no native
-// keyboard bridge. The shortcuts service therefore uses Web admission rules,
-// which refuse Option+Shift+digit on macOS. Observe its DOM-backed fixed-input
-// stream directly so the default action has no configurable catalog row.
+// The Desktop shell marks <html data-platform> with the host platform, so the
+// shortcuts service reports `runtime: "desktop"` there and `"web"` in other
+// Web transports. Either way installKeyboard feeds the DOM-backed fixed-input
+// stream before its native early-return, and the shell's main process only
+// intercepts registered catalog chords, so Option+Shift+digit reaches this
+// observer. The combination has no configurable catalog row, so it cannot be
+// handled through the settings catalog; observe the fixed stream directly.
 export function installDesktopViewShortcuts(
   ctx: ClientContext,
   resolveTab: (position: number) => HTMLElement | null | undefined = position => tabButtons()[position - 1],
 ): () => void {
   const bridge = (window as Window & { dshDesktop?: { protocolVersion?: number } }).dshDesktop
-  if (bridge?.protocolVersion !== 1 || !/mac|iphone|ipad/iu.test(navigator.platform) || ctx.shortcuts.runtime !== 'web') {
+  if (bridge?.protocolVersion !== 1 || !/mac|iphone|ipad/iu.test(navigator.platform)
+    || (ctx.shortcuts.runtime !== 'web' && ctx.shortcuts.runtime !== 'desktop')) {
     return () => {}
   }
   return ctx.shortcuts.observeFixedInput((input) => {
