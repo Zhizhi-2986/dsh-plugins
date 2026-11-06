@@ -18,6 +18,7 @@ test('adds native Files actions and a Preview Edit action without replacing nati
   const nativePlainTextBody = () => null
   const searchAction = () => null
   const quickOpenAction = () => null
+  const globalReplaceAction = () => null
   const favoritesAction = () => null
   const createFileAction = () => null
   const documentEditAction = () => null
@@ -68,6 +69,7 @@ test('adds native Files actions and a Preview Edit action without replacing nati
   const disposeExtensions = registerWorkspaceFilesEnhancements(context, {
     searchAction,
     quickOpenAction,
+    globalReplaceAction,
     favoritesAction,
     createFileAction,
     documentEditAction,
@@ -79,14 +81,14 @@ test('adds native Files actions and a Preview Edit action without replacing nati
   const sidebarEntries = slots.entriesOfSlot('sidebar.right.pane.tab')
   assert.deepEqual(sidebarEntries.map((entry) => entry.component), [nativeFilesBody, nativeTextBody])
   const actionEntries = slots.entries('sidebar.right.tab.files.actions')
-  assert.deepEqual(actionEntries.map((entry) => entry.component), [searchAction, quickOpenAction, favoritesAction, createFileAction])
+  assert.deepEqual(actionEntries.map((entry) => entry.component), [searchAction, quickOpenAction, globalReplaceAction, favoritesAction, createFileAction])
   assert.deepEqual(actionEntries.map((entry) => entry.options.id), [
     'dsh-workspace-enhanced/search',
     'dsh-workspace-enhanced/quick-open',
+    'dsh-workspace-enhanced/global-replace',
     'dsh-workspace-enhanced/favorites',
     WORKSPACE_CREATE_FILE_ACTION_ID,
   ])
-  assert.equal(actionEntries.some((entry) => /global-replace/u.test(entry.options.id)), false)
   const documentActionEntries = slots.entriesOfSlot('sidebar.right.tab.document.action')
   assert.deepEqual(documentActionEntries.map((entry) => [entry.options.key, entry.component]), [
     [nativeMarkdownId, documentEditAction],

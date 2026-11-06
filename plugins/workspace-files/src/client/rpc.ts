@@ -4,6 +4,7 @@ import { z } from 'zod'
 import type { Context } from '@deepseek-ai/cordis'
 import type {
   RemoteResult,
+  RemoteStreamHandle,
   TypertRemoteContribution,
 } from '@deepseek-ai/dsh-typert-protocol'
 import {
@@ -18,6 +19,7 @@ import {
   type QuickOpenOk,
   type SearchOk,
   type WorkspaceSearchOptions,
+  type WorkspaceWatchFrame,
   type WriteOk,
 } from '../shared/rpc-contract.ts'
 
@@ -57,6 +59,10 @@ const WriteResultSchema = z.union([WriteOkSchema, FailResultSchema])
 const CreateFileResultSchema = z.union([CreateFileOkSchema, FailResultSchema])
 const SearchResultSchema = z.union([SearchOkSchema, FailResultSchema])
 const QuickOpenResultSchema = z.union([QuickOpenOkSchema, FailResultSchema])
+const WorkspaceWatchFrameSchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('ready') }),
+  z.object({ kind: z.literal('change') }),
+])
 
 function strParam(name: string, schema: z.ZodType = Str) {
   return {
@@ -90,13 +96,14 @@ function resultCodec(schema: z.ZodType, typeSymbol: string) {
   return { mode: 'strict' as const, typeSymbol: `${PKG}/types#${typeSymbol}`, create: () => schema }
 }
 
-function invocation(method: string, parameters: ReturnType<typeof strParam>[], result: ReturnType<typeof resultCodec>, cancellable = false) {
+function invocation(method: string, parameters: ReturnType<typeof strParam>[], result: ReturnType<typeof resultCodec>, cancellable = false, mode?: 'stream') {
   return {
     id: `${PKG}#${EXPLORER_FS_SERVICE}/${method}`,
     service: EXPLORER_FS_SERVICE,
     namespace: EXPLORER_FS_SERVICE,
     method,
     invocation: { kind: 'direct' as const },
+    ...(mode === undefined ? {} : { mode }),
     parameters: [
       sessionScopeParam(),
       ...parameters.map((parameter) => parameter.codec.typeSymbol === `${PKG}/types#String`
@@ -117,6 +124,7 @@ export const TYPERT_REMOTE: TypertRemoteContribution = {
     invocation('read', [strParam('path', Str.max(1024))], resultCodec(ReadResultSchema, 'ReadResult'), true),
     invocation('search', [strParam('query', Str.max(512)), typedParam('options', SearchOptionsSchema, 'WorkspaceSearchOptions')], resultCodec(SearchResultSchema, 'SearchResult'), true),
     invocation('quickOpen', [strParam('query', Str.max(256))], resultCodec(QuickOpenResultSchema, 'QuickOpenResult'), true),
+    invocation('watch', [strParam('path', Str.max(1024))], resultCodec(WorkspaceWatchFrameSchema, 'WorkspaceWatchFrame'), true, 'stream'),
     invocation('createFile', [strParam('path', Str.max(1024)), strParam('content', Str.max(2 * 1024 * 1024))], resultCodec(CreateFileResultSchema, 'CreateFileResult'), true),
     invocation('write', [strParam('path', Str.max(1024)), strParam('content', Str.max(2 * 1024 * 1024)), strParam('expectedVersion', VersionToken)], resultCodec(WriteResultSchema, 'WriteResult'), true),
   ],
@@ -134,6 +142,7 @@ export interface ExplorerFsRemote {
   read(sessionId: string, path: string, signal?: AbortSignal): Promise<RemoteResult<ReadOk | FailResult>>
   search(sessionId: string, query: string, options: WorkspaceSearchOptions, signal?: AbortSignal): Promise<RemoteResult<SearchOk | FailResult>>
   quickOpen(sessionId: string, query: string, signal?: AbortSignal): Promise<RemoteResult<QuickOpenOk | FailResult>>
+  watch(sessionId: string, path: string, signal?: AbortSignal): RemoteStreamHandle<WorkspaceWatchFrame, never>
   createFile(sessionId: string, path: string, content: string, signal?: AbortSignal): Promise<RemoteResult<CreateFileOk | FailResult>>
   write(sessionId: string, path: string, content: string, expectedVersion: string, signal?: AbortSignal): Promise<RemoteResult<WriteOk | FailResult>>
 }
@@ -183,6 +192,11 @@ export function createExplorerApi(ctx: Context, boundSessionId?: string | null) 
     quickOpen: (query: string, signal?: AbortSignal) => withSession(
       (sessionId) => unwrap(remote().quickOpen(sessionId, query, signal)),
     ),
+    watch: (path: string, signal?: AbortSignal) => {
+      const sessionId = boundSessionId === undefined ? currentSessionId() : boundSessionId
+      if (sessionId == null) throw new Error('Select an active session to watch its workspace file.')
+      return remote().watch(sessionId, path, signal)
+    },
     createFile: (path: string, content: string, signal?: AbortSignal) => withSession(
       (sessionId) => unwrap(remote().createFile(sessionId, path, content, signal)),
     ),

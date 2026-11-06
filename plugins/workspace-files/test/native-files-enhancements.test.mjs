@@ -65,7 +65,7 @@ const copy = {
 }
 const t = (key) => copy[key] ?? key
 
-test('exports native Quick Open, Favorites, Create File, Preview Edit action, and bodies but not Global Replace', async () => {
+test('exports native Quick Open, Global Replace, Favorites, Create File, Preview Edit action, and bodies', async () => {
   for (const component of [
     WorkspaceMarkdownBody,
     WorkspaceCodeBody,
@@ -78,7 +78,7 @@ test('exports native Quick Open, Favorites, Create File, Preview Edit action, an
     assert.equal(typeof component, 'function')
   }
   const actions = await import('../lib/client/native-files-actions.js')
-  assert.equal('WorkspaceGlobalReplaceAction' in actions, false)
+  assert.equal(typeof actions.WorkspaceGlobalReplaceAction, 'function')
 })
 
 function createContext(searchResults = [], searchFails = false, quickOpenResults = [], quickOpenFails = false, workspaceEntries = []) {

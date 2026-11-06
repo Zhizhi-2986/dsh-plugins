@@ -130,6 +130,46 @@ export function EditorSurface(props: EditorSurfaceProps): ReactElement {
     ? mdModes.get(activePath)
     : 'source'
 
+  const reconcileExternalChange = useCallback(async (path: string, signal: AbortSignal): Promise<void> => {
+    const current = buffers.get(path)
+    if (current === undefined) return
+    const result = await api.read(path)
+    if (signal.aborted) return
+    if (!result.ok) {
+      setConflictPath(path)
+      return
+    }
+    const latest = buffers.get(path)
+    if (latest === undefined || result.value.version === latest.version) return
+    if (buffers.isDirty(path)) {
+      setConflictPath(path)
+      return
+    }
+    buffers.load(path, result.value.content, result.value.version)
+    setConflictPath(null)
+    setStatus(tRef.current('editorExternalReloaded'))
+    window.setTimeout(() => setStatus(''), 2000)
+  }, [api, buffers])
+
+  useEffect(() => {
+    if (sessionId === undefined || activePath === null || buffer === undefined) return
+    const controller = new AbortController()
+    const path = activePath
+    void (async () => {
+      try {
+        for await (const frame of api.watch(path, controller.signal)) {
+          if (controller.signal.aborted) return
+          if (frame.kind === 'ready' || frame.kind === 'change') {
+            await reconcileExternalChange(path, controller.signal)
+          }
+        }
+      } catch {
+        if (!controller.signal.aborted) setStatus(tRef.current('editorWatchUnavailable'))
+      }
+    })()
+    return () => controller.abort()
+  }, [api, activePath, buffer?.version, reconcileExternalChange, sessionId])
+
   useEffect(() => {
     if (actionPlacement !== 'preview-toolbar' || sessionId === undefined) return
     publishPreviewEditorActionState(sessionId, {

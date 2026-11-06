@@ -5,6 +5,7 @@ import { NS } from './locales.ts'
 
 export const WORKSPACE_FILES_SEARCH_ACTION_ID = 'dsh-workspace-enhanced/search'
 export const WORKSPACE_QUICK_OPEN_ACTION_ID = 'dsh-workspace-enhanced/quick-open'
+export const WORKSPACE_GLOBAL_REPLACE_ACTION_ID = 'dsh-workspace-enhanced/global-replace'
 export const WORKSPACE_FAVORITES_ACTION_ID = 'dsh-workspace-enhanced/favorites'
 export const WORKSPACE_CREATE_FILE_ACTION_ID = 'dsh-workspace-enhanced/create-file'
 export const NATIVE_MARKDOWN_PREVIEW_ID = '@deepseek-ai/dsh-client-ui-sidebar-documentpreview/markdown'
@@ -60,6 +61,7 @@ export interface WorkspacePlainTextRendererProps extends WorkspaceDocumentRender
 export interface WorkspaceFilesEnhancementComponents {
   readonly searchAction: (props: WorkspaceFilesSearchActionProps) => ReactNode
   readonly quickOpenAction: (props: WorkspaceFilesSearchActionProps) => ReactNode
+  readonly globalReplaceAction: (props: WorkspaceFilesSearchActionProps) => ReactNode
   readonly favoritesAction: (props: WorkspaceFilesSearchActionProps) => ReactNode
   readonly createFileAction: (props: WorkspaceFilesSearchActionProps) => ReactNode
   readonly documentEditAction: (props: WorkspaceDocumentEditActionProps) => ReactNode
@@ -101,6 +103,7 @@ export function registerWorkspaceFilesEnhancements(
     try {
       registerAction(WORKSPACE_FILES_SEARCH_ACTION_ID, -100, components.searchAction)
       registerAction(WORKSPACE_QUICK_OPEN_ACTION_ID, -80, components.quickOpenAction)
+      registerAction(WORKSPACE_GLOBAL_REPLACE_ACTION_ID, -70, components.globalReplaceAction)
       registerAction(WORKSPACE_FAVORITES_ACTION_ID, -60, components.favoritesAction)
       registerAction(WORKSPACE_CREATE_FILE_ACTION_ID, -40, components.createFileAction)
       return () => disposers.reverse().forEach((dispose) => dispose())

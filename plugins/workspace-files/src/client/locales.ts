@@ -82,6 +82,8 @@ export type ExplorerKey =
   | 'codePreviewUnwrap'
   | 'editorView'
   | 'editorConflict'
+  | 'editorWatchUnavailable'
+  | 'editorExternalReloaded'
   | 'editorFind'
   | 'editorFindPlaceholder'
   | 'editorFindCaseSensitive'
@@ -108,6 +110,11 @@ export type ExplorerKey =
   | 'createFile'
   | 'createFileHint'
   | 'createFilePath'
+  | 'createFileTemplate'
+  | 'templateBlank'
+  | 'templateMarkdown'
+  | 'templateJson'
+  | 'templateTypescript'
   | 'createFileFailed'
   | 'createFileAction'
   | 'creatingFile'
@@ -211,6 +218,8 @@ const zh: Record<ExplorerKey, string> = {
   codePreviewUnwrap: '取消自动换行',
   editorView: '查看模式',
   editorConflict: '文件已被外部修改，未保存内容已保留；请重新载入后再试。',
+  editorWatchUnavailable: '无法监听此文件的外部修改；保存时仍会校验文件版本。',
+  editorExternalReloaded: '文件已从磁盘更新。',
   editorFind: '查找',
   editorFindPlaceholder: '查找当前文件',
   editorFindCaseSensitive: '区分大小写',
@@ -237,6 +246,11 @@ const zh: Record<ExplorerKey, string> = {
   createFile: '新建文件',
   createFileHint: '输入工作区根目录下的相对路径；父目录必须已存在。',
   createFilePath: '相对工作区根目录的文件路径',
+  createFileTemplate: '文件模板',
+  templateBlank: '空白文件',
+  templateMarkdown: 'Markdown 文档',
+  templateJson: 'JSON 对象',
+  templateTypescript: 'TypeScript 模块',
   createFileFailed: '创建文件失败',
   createFileAction: '创建',
   creatingFile: '创建中…',
@@ -338,6 +352,8 @@ const en: Record<ExplorerKey, string> = {
   codePreviewUnwrap: 'Unwrap lines',
   editorView: 'View mode',
   editorConflict: 'The file changed outside the editor. Your unsaved text was kept; reload before saving again.',
+  editorWatchUnavailable: 'Could not watch this file for external changes. Saves still check the file version.',
+  editorExternalReloaded: 'File updated from disk.',
   editorFind: 'Find',
   editorFindPlaceholder: 'Find in current file',
   editorFindCaseSensitive: 'Match case',
@@ -364,6 +380,11 @@ const en: Record<ExplorerKey, string> = {
   createFile: 'New file',
   createFileHint: 'Enter a path relative to the workspace root. Parent directories must already exist.',
   createFilePath: 'File path from workspace root',
+  createFileTemplate: 'File template',
+  templateBlank: 'Blank file',
+  templateMarkdown: 'Markdown document',
+  templateJson: 'JSON object',
+  templateTypescript: 'TypeScript module',
   createFileFailed: 'Could not create file',
   createFileAction: 'Create',
   creatingFile: 'Creating…',

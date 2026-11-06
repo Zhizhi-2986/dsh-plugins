@@ -6,6 +6,8 @@ import type { FileExplorerSettings } from '../shared/settings-contract.ts'
 import { fileAddressFor } from './workspace-address.ts'
 import { createExplorerApi } from './rpc.ts'
 import { CreateFileDialog } from './explorer/CreateFileDialog.tsx'
+import { GlobalReplaceDialog } from './explorer/GlobalReplaceDialog.tsx'
+import { editorStoresForSession } from './state/session-stores.ts'
 import { NewFileIconButton } from './explorer/ToolbarIcons.tsx'
 import { favoritesForWorkspace, normalizeFavoritePath, toggleWorkspaceFavorite, type FavoriteToggleResult } from './favorites.ts'
 import { restoreDialogTrigger, trapDialogTab } from './dialog-focus.ts'
@@ -528,6 +530,49 @@ export function WorkspaceCreateFileAction(
         onClick={() => setOpen(true)}
       />
       {open ? <CreateFileDialog api={api} t={t} onClose={closeDialog} onCreated={onCreated} /> : null}
+    </>
+  )
+}
+
+/** Expose the existing preview-and-versioned-write flow in native Files. */
+export function WorkspaceGlobalReplaceAction(
+  props: WorkspaceFilesSearchActionProps & { readonly ctx: ClientContext },
+): ReactElement {
+  const { ctx, sessionId, t } = props
+  const [open, setOpen] = useState(false)
+  const triggerRef = useRef<HTMLButtonElement | null>(null)
+  const api = useMemo(() => createExplorerApi(ctx, sessionId), [ctx, sessionId])
+  const buffers = useMemo(() => editorStoresForSession(sessionId).buffers, [sessionId])
+  const closeDialog = (): void => {
+    setOpen(false)
+    window.setTimeout(() => restoreDialogTrigger(triggerRef.current), 0)
+  }
+
+  return (
+    <>
+      <button
+        ref={triggerRef}
+        type="button"
+        className={css.searchButton}
+        title={t('replaceTitle')}
+        aria-label={t('replaceTitle')}
+        aria-expanded={open}
+        data-workspace-files-action="global-replace"
+        onClick={() => setOpen(true)}
+      >
+        <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false">
+          <path d="M3 5h12m0 0-3-3m3 3-3 3M17 15H5m0 0 3-3m-3 3 3 3" />
+        </svg>
+      </button>
+      {open ? (
+        <GlobalReplaceDialog
+          api={api}
+          buffers={buffers}
+          t={t}
+          initialFindText=""
+          onClose={closeDialog}
+        />
+      ) : null}
     </>
   )
 }

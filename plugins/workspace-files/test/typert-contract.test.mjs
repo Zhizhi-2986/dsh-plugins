@@ -6,7 +6,7 @@ import { MAX_FS_VERSION_TOKEN_CHARS } from '../src/shared/rpc-contract.ts'
 
 test('declares Session-scoped read, write, and create endpoints', () => {
   const methods = TYPERT.invocations.map((item) => item.method).sort()
-  assert.deepEqual(methods, ['createFile', 'getRoot', 'list', 'quickOpen', 'read', 'search', 'write'])
+  assert.deepEqual(methods, ['createFile', 'getRoot', 'list', 'quickOpen', 'read', 'search', 'watch', 'write'])
   for (const invocation of TYPERT.invocations) {
     assert.equal(invocation.parameters[0].source, 'lookup')
     assert.equal(invocation.parameters[0].lookup, 'workspaceFileScope')
@@ -22,6 +22,7 @@ test('keeps Host and Client invocation descriptors in exact parity', () => {
     assert.deepEqual(client.parameters.map((parameter) => [parameter.name, parameter.wire, parameter.lookup, parameter.codec.typeSymbol]),
       host.parameters.map((parameter) => [parameter.name, parameter.wire, parameter.lookup, parameter.codec.typeSymbol]))
     assert.equal(client.result.typeSymbol, host.result.typeSymbol)
+    assert.equal(client.mode, host.mode)
   }
 })
 

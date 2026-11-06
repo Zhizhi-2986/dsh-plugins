@@ -5,6 +5,13 @@ import type { ExplorerTranslate } from '../locales.ts'
 import { trapDialogTab } from '../dialog-focus.ts'
 import css from './explorer.module.css'
 
+const FILE_TEMPLATES = [
+  { id: 'blank', label: 'templateBlank', content: '' },
+  { id: 'markdown', label: 'templateMarkdown', content: '# Title\n\n' },
+  { id: 'json', label: 'templateJson', content: '{\n  \n}\n' },
+  { id: 'typescript', label: 'templateTypescript', content: 'export {}\n' },
+] as const
+
 export function CreateFileDialog(props: {
   readonly api: ExplorerApi
   readonly t: ExplorerTranslate
@@ -13,6 +20,7 @@ export function CreateFileDialog(props: {
 }): ReactElement {
   const { api, t, onClose, onCreated } = props
   const [path, setPath] = useState('')
+  const [templateId, setTemplateId] = useState<(typeof FILE_TEMPLATES)[number]['id']>('blank')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const dialogRef = useRef<HTMLElement | null>(null)
@@ -21,10 +29,12 @@ export function CreateFileDialog(props: {
     event.preventDefault()
     const normalized = path.trim()
     if (normalized.length === 0 || busy) return
+    const template = FILE_TEMPLATES.find((candidate) => candidate.id === templateId)
+    if (template === undefined) return
     setBusy(true)
     setError(null)
     try {
-      const result = await api.createFile(normalized, '')
+      const result = await api.createFile(normalized, template.content)
       if (!result.ok) {
         setError(result.error.message)
         return
@@ -67,6 +77,19 @@ export function CreateFileDialog(props: {
             value={path}
             onChange={(event) => setPath(event.target.value)}
           />
+          <label className={css.dialogLabel} htmlFor="workspace-create-file-template">{t('createFileTemplate')}</label>
+          <select
+            id="workspace-create-file-template"
+            className={css.dialogInput}
+            aria-label={t('createFileTemplate')}
+            value={templateId}
+            disabled={busy}
+            onChange={(event) => setTemplateId(event.target.value as (typeof FILE_TEMPLATES)[number]['id'])}
+          >
+            {FILE_TEMPLATES.map((templateOption) => (
+              <option key={templateOption.id} value={templateOption.id}>{t(templateOption.label)}</option>
+            ))}
+          </select>
           {error !== null ? <div className={css.dialogError} role="alert">{error}</div> : null}
           <div className={css.dialogActions}>
             <button type="button" className={css.dialogButton} onClick={onClose} disabled={busy}>{t('cancel')}</button>

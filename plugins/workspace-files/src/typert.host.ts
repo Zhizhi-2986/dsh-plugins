@@ -32,6 +32,10 @@ const SearchOk = z.object({
   truncated: z.boolean().optional(),
 })
 const QuickOpenOk = z.object({ ok: z.literal(true), results: z.array(z.string()), truncated: z.boolean().optional() })
+const WorkspaceWatchFrame = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('ready') }),
+  z.object({ kind: z.literal('change') }),
+])
 
 function jsonParam(name: string, schema: z.ZodType = Str, typeName = 'String') {
   return {
@@ -60,13 +64,14 @@ function resultCodec(schema: z.ZodType, typeSymbol: string) {
   return { mode: 'strict' as const, typeSymbol: `${PACKAGE}/types#${typeSymbol}`, create: () => schema }
 }
 
-function invocation(method: string, parameters: ReturnType<typeof jsonParam>[], result: ReturnType<typeof resultCodec>, cancellable = false) {
+function invocation(method: string, parameters: ReturnType<typeof jsonParam>[], result: ReturnType<typeof resultCodec>, cancellable = false, mode?: 'stream') {
   return {
     id: `${PACKAGE}#${SERVICE}/${method}`,
     service: SERVICE,
     namespace: SERVICE,
     method,
     invocation: { kind: 'direct' as const },
+    ...(mode === undefined ? {} : { mode }),
     parameters: [
       workspaceScopeParam(),
       ...parameters.map((parameter) => parameter.codec.typeSymbol === `${PACKAGE}/types#String`
@@ -89,6 +94,7 @@ export const TYPERT = {
     invocation('list', [jsonParam('path', Str.max(1024))], resultCodec(z.union([ListOk, FailResult]), 'ListResult'), true),
     invocation('read', [jsonParam('path', Str.max(1024))], resultCodec(z.union([ReadOk, FailResult]), 'ReadResult'), true),
     invocation('quickOpen', [jsonParam('query', Str.max(256))], resultCodec(z.union([QuickOpenOk, FailResult]), 'QuickOpenResult'), true),
+    invocation('watch', [jsonParam('path', Str.max(1024))], resultCodec(WorkspaceWatchFrame, 'WorkspaceWatchFrame'), true, 'stream'),
     invocation('search', [jsonParam('query', Str.max(512)), jsonParam('options', SearchOptions, 'WorkspaceSearchOptions')], resultCodec(z.union([SearchOk, FailResult]), 'SearchResult'), true),
     invocation('createFile', [
       jsonParam('path', Str.max(1024)),

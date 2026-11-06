@@ -86,6 +86,8 @@ export interface QuickOpenOk {
   readonly truncated?: boolean
 }
 
+export type WorkspaceWatchFrame = { readonly kind: 'ready' } | { readonly kind: 'change' }
+
 export type RootResult = RootOk | FailResult
 export type ListResult = ListOk | FailResult
 export type ReadResult = ReadOk | FailResult

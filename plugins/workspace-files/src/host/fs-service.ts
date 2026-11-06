@@ -18,6 +18,7 @@ import {
   type RootOk,
   type SearchOk,
   type WorkspaceSearchOptions,
+  type WorkspaceWatchFrame,
   type WriteOk,
 } from '../shared/rpc-contract.ts'
 import { MAX_GLOB_FILTER_CHARS, quickOpenWorkspace, searchWorkspace } from '../search.mts'
@@ -263,6 +264,18 @@ export class ExplorerFsService extends TypertRemoteService {
     } finally {
       clearTimeout(timer)
       signal?.removeEventListener('abort', forwardAbort)
+    }
+  }
+
+  @Remote({ mode: 'stream' })
+  async *watch(scope: WorkspaceFileScope, path: string, signal: AbortSignal): AsyncIterable<WorkspaceWatchFrame> {
+    const resolved = await resolvePath(selfOf(this), scope, path, signal)
+    if (!resolved.ok) throw new Error(resolved.result.message)
+    if (resolved.relative === '') throw new Error('a workspace-relative file path is required')
+    const info = await this.context.fs.stat(resolved.target, signal)
+    if (info?.type !== 'file') throw new Error('only regular workspace files can be watched')
+    for await (const frame of this.context.workspaceFiles.changes(scope, resolved.relative, signal)) {
+      yield frame.kind === 'ready' ? frame : { kind: 'change' }
     }
   }
 

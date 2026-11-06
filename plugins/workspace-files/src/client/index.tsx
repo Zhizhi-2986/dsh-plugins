@@ -26,7 +26,7 @@ import {
   WorkspaceMarkdownBody,
   WorkspacePlainTextBody,
 } from './native-files-enhancements.tsx'
-import { WorkspaceCreateFileAction, WorkspaceFavoritesAction, WorkspaceQuickOpenAction } from './native-files-actions.tsx'
+import { WorkspaceCreateFileAction, WorkspaceFavoritesAction, WorkspaceGlobalReplaceAction, WorkspaceQuickOpenAction } from './native-files-actions.tsx'
 
 const PACKAGE = 'dsh-workspace-enhanced'
 /** Required client services before apply runs. */
@@ -80,6 +80,7 @@ export async function apply(ctx: ClientContext): Promise<void> {
     remoteCtx.effect(() => registerWorkspaceFilesEnhancements(remoteCtx, {
       searchAction: (props) => <WorkspaceFilesSearchAction ctx={remoteCtx} {...props} />,
       quickOpenAction: (props) => <WorkspaceQuickOpenAction ctx={remoteCtx} {...props} />,
+      globalReplaceAction: (props) => <WorkspaceGlobalReplaceAction ctx={remoteCtx} {...props} />,
       favoritesAction: (props) => <WorkspaceFavoritesAction ctx={remoteCtx} scope={settings as ConfigForm<FileExplorerSettings>} {...props} />,
       createFileAction: (props) => <WorkspaceCreateFileAction ctx={remoteCtx} {...props} />,
       documentEditAction: (props) => <WorkspaceDocumentEditAction ctx={remoteCtx} {...props} />,
