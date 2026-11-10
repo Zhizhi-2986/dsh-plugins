@@ -15,6 +15,7 @@ export const inject = ['workspaceFiles', 'fs', 'sessions', 'sandboxPolicy', 'typ
 export interface Config {
   openLinksInEditor: Volatile<boolean>
   reorderViewTabs: Volatile<boolean>
+  viewTabModifier: Volatile<'alt-shift' | 'control-shift' | 'meta-shift'>
   viewTabOrder: Volatile<string[]>
   favoriteFiles: Volatile<FavoriteFileEntry[]>
 }
@@ -30,6 +31,7 @@ const FavoriteFiles = z.array(z.object({
 export const Config: ReturnType<typeof z.object> = z.object({
   openLinksInEditor: z.boolean().default(true).volatile(),
   reorderViewTabs: z.boolean().default(false).volatile(),
+  viewTabModifier: z.union([z.const('alt-shift'), z.const('control-shift'), z.const('meta-shift')]).default('alt-shift').volatile(),
   viewTabOrder: z.array(z.string()).default([]).volatile(),
   favoriteFiles: FavoriteFiles,
 })

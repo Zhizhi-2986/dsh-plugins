@@ -17,6 +17,9 @@ export type ExplorerKey =
   | 'settingsOpenLinksHint'
   | 'settingsReorderTabs'
   | 'settingsReorderTabsHint'
+  | 'settingsViewTabShortcut'
+  | 'settingsViewTabShortcutHint'
+  | 'settingsViewTabShortcutRecord'
   | 'expand'
   | 'collapse'
   | 'expandAll'
@@ -68,6 +71,9 @@ export type ExplorerKey =
   | 'editorDiscardChanges'
   | 'editorKeepEditing'
   | 'editorConflictTitle'
+  | 'editorShowDiff'
+  | 'editorDraftVersion'
+  | 'editorDiskVersion'
   | 'editorCopyDraft'
   | 'editorDraftCopied'
   | 'editorDraftCopyFailed'
@@ -150,6 +156,9 @@ const zh: Record<ExplorerKey, string> = {
   settingsOpenLinksHint: '拦截会话消息里的工作区路径链接，并在 DSH 原生预览中打开',
   settingsReorderTabs: '实验性：拖拽排序顶部视图 Tab',
   settingsReorderTabsHint: '仅改变 Desktop 的视觉顺序；读屏和焦点顺序仍按原始 Tab 顺序。插件停用后恢复原貌。',
+  settingsViewTabShortcut: '切换工作区标签页',
+  settingsViewTabShortcutHint: '按住所选修饰键组合并按 1–9 切换；数字固定，不可单独修改。',
+  settingsViewTabShortcutRecord: '同时按下修饰键组合…',
   expand: '展开',
   collapse: '折叠',
   expandAll: '全部展开',
@@ -204,6 +213,9 @@ const zh: Record<ExplorerKey, string> = {
   editorDiscardChanges: '放弃修改',
   editorKeepEditing: '继续编辑',
   editorConflictTitle: '文件已在磁盘上被修改',
+  editorShowDiff: '查看差异',
+  editorDraftVersion: '当前草稿',
+  editorDiskVersion: '磁盘版本',
   editorCopyDraft: '复制草稿',
   editorDraftCopied: '草稿已复制',
   editorDraftCopyFailed: '无法复制草稿，请选中文本后手动复制。',
@@ -284,6 +296,9 @@ const en: Record<ExplorerKey, string> = {
   settingsOpenLinksHint: 'Intercept workspace file links in conversation messages and open the DSH native Preview',
   settingsReorderTabs: 'Experimental: drag to reorder top View tabs',
   settingsReorderTabsHint: 'Visual order only on Desktop; screen-reader and focus order remain unchanged. Disabling the plugin restores the native tabs.',
+  settingsViewTabShortcut: 'Switch workspace tabs',
+  settingsViewTabShortcutHint: 'Hold the selected modifier combination and press 1–9. Number keys are fixed.',
+  settingsViewTabShortcutRecord: 'Press the modifier combination…',
   expand: 'Expand',
   collapse: 'Collapse',
   expandAll: 'Expand All',
@@ -338,6 +353,9 @@ const en: Record<ExplorerKey, string> = {
   editorDiscardChanges: 'Discard changes',
   editorKeepEditing: 'Keep editing',
   editorConflictTitle: 'The file changed on disk',
+  editorShowDiff: 'View differences',
+  editorDraftVersion: 'Current draft',
+  editorDiskVersion: 'Disk version',
   editorCopyDraft: 'Copy draft',
   editorDraftCopied: 'Draft copied',
   editorDraftCopyFailed: 'Could not copy the draft; select the text and copy manually.',

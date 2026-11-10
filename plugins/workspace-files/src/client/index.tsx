@@ -50,7 +50,7 @@ export async function apply(ctx: ClientContext): Promise<void> {
   const settings = ctx.configForms.get<FileExplorerSettings>(FILE_EXPLORER_SETTINGS_NS)
   ctx.effect(() => {
     const reorder = installDesktopTabReorder(ctx, settings)
-    const disposeShortcuts = installDesktopViewShortcuts(ctx, reorder.resolveTab)
+    const disposeShortcuts = installDesktopViewShortcuts(ctx, reorder.resolveTab, settings)
     return () => {
       disposeShortcuts()
       reorder.dispose()

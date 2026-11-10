@@ -105,6 +105,7 @@ export function EditorSurface(props: EditorSurfaceProps): ReactElement {
   const [editingPath, setEditingPath] = useState<string | null>(null)
   const [dirtyLeave, setDirtyLeave] = useState(false)
   const [conflictPath, setConflictPath] = useState<string | null>(null)
+  const [externalSnapshot, setExternalSnapshot] = useState<{ readonly path: string; readonly content: string } | null>(null)
   const [reloadArmed, setReloadArmed] = useState(false)
   const hostRef = useRef<HTMLDivElement | null>(null)
   const textareaRef = useRef<HTMLTextAreaElement | null>(null)
@@ -137,16 +138,19 @@ export function EditorSurface(props: EditorSurfaceProps): ReactElement {
     if (signal.aborted) return
     if (!result.ok) {
       setConflictPath(path)
+      setExternalSnapshot(null)
       return
     }
     const latest = buffers.get(path)
     if (latest === undefined || result.value.version === latest.version) return
     if (buffers.isDirty(path)) {
       setConflictPath(path)
+      setExternalSnapshot({ path, content: result.value.content })
       return
     }
     buffers.load(path, result.value.content, result.value.version)
     setConflictPath(null)
+    setExternalSnapshot(null)
     setStatus(tRef.current('editorExternalReloaded'))
     window.setTimeout(() => setStatus(''), 2000)
   }, [api, buffers])
@@ -283,7 +287,13 @@ export function EditorSurface(props: EditorSurfaceProps): ReactElement {
         if (!result.ok) {
           if (result.error.code === 'CONFLICT') {
             setConflictPath(path)
+            setExternalSnapshot(null)
             setError(null)
+            const latest = await api.read(path)
+            const current = buffers.get(path)
+            if (latest.ok && current !== undefined && latest.value.version !== current.version) {
+              setExternalSnapshot({ path, content: latest.value.content })
+            }
           } else {
             setConflictPath(null)
             setError(result.error.message)
@@ -353,6 +363,7 @@ export function EditorSurface(props: EditorSurfaceProps): ReactElement {
       }
       buffers.load(path, result.value.content, result.value.version)
       setConflictPath(null)
+      setExternalSnapshot(null)
       setError(null)
       setStatus(tRef.current('editorConflictReloadDone'))
       window.setTimeout(() => setStatus(''), 2000)
@@ -598,6 +609,7 @@ export function EditorSurface(props: EditorSurfaceProps): ReactElement {
   // Leaving a file or edit mode clears per-file conflict and confirmation state.
   useEffect(() => {
     setConflictPath(null)
+    setExternalSnapshot(null)
     setDirtyLeave(false)
     setReloadArmed(false)
   }, [activePath, editingPath])
@@ -649,6 +661,15 @@ export function EditorSurface(props: EditorSurfaceProps): ReactElement {
               {t('editorKeepEditing')}
             </button>
           </div>
+          {externalSnapshot?.path === activePath ? (
+            <details data-editor-diff="">
+              <summary>{t('editorShowDiff')}</summary>
+              <div className={css.conflictActions}>
+                <section><strong>{t('editorDraftVersion')}</strong><pre>{buffer?.content ?? ''}</pre></section>
+                <section><strong>{t('editorDiskVersion')}</strong><pre>{externalSnapshot.content}</pre></section>
+              </div>
+            </details>
+          ) : null}
         </div>
       ) : error !== null ? <div className={css.errorBanner}>{error}</div> : null}
       {dirtyLeave ? (

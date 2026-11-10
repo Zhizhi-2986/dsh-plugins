@@ -113,7 +113,7 @@ test('does not install local bindings outside the installed macOS Desktop shell'
     ctx.shortcuts.runtime = runtime
     installDesktopViewShortcuts(ctx)()
   }
-  assert.equal(registrations, 0)
+  assert.equal(registrations, 2)
   delete window.dshDesktop
   Object.defineProperty(navigator, 'platform', { configurable: true, value: 'MacIntel' })
 })

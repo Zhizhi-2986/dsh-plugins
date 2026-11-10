@@ -60,11 +60,15 @@ export interface FavoriteFileEntry {
   readonly path: string
 }
 
+export type ViewTabModifier = 'alt-shift' | 'control-shift' | 'meta-shift'
+
 export interface FileExplorerSettings {
   /** Route conversation file-path links into the editor. */
   readonly openLinksInEditor: boolean
   /** Opt-in: visually reorder Desktop's native View tabs. */
   readonly reorderViewTabs: boolean
+  /** Modifier held with the fixed 1–9 keys to switch native view tabs. */
+  readonly viewTabModifier: ViewTabModifier
   /** Profile-local order of registered View ids, including hidden Views. */
   readonly viewTabOrder: readonly string[]
   /** Workspace-root-keyed favorites; paths remain relative to their workspace. */
@@ -74,6 +78,7 @@ export interface FileExplorerSettings {
 export const DEFAULT_FILE_EXPLORER_SETTINGS: FileExplorerSettings = {
   openLinksInEditor: true,
   reorderViewTabs: false,
+  viewTabModifier: 'alt-shift',
   viewTabOrder: [],
   favoriteFiles: [],
 }

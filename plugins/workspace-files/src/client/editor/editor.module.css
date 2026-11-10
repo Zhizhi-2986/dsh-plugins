@@ -567,6 +567,19 @@
   flex: none;
 }
 
+.conflictActions section {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.conflictActions pre {
+  max-height: 240px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: 12px/1.5 var(--ds-font-family-code, monospace);
+}
+
 .confirmDialog {
   position: absolute;
   top: 56px;

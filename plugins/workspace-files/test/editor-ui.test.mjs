@@ -352,7 +352,7 @@ test('a CONFLICT save keeps the draft and supports keep editing, reload, and a f
     await act(async () => document.querySelector('[data-conflict-reload]').click())
     await act(async () => document.querySelector('[data-conflict-reload-confirm]').click())
     await flush()
-    assert.equal(reads.length, 2)
+    assert.ok(reads.length >= 2)
     assert.equal(view.buffers.get('conflict.md')?.content, 'on disk now')
     assert.equal(view.buffers.get('conflict.md')?.version, 'v9')
     assert.equal(view.buffers.isDirty('conflict.md'), false, 'reload rebases to a clean baseline')

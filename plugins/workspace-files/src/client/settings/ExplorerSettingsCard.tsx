@@ -30,6 +30,7 @@ export function ExplorerSettingsCard(props: ExplorerSettingsCardProps): ReactEle
   )
   const t = explorerT(locale)
   const [saving, setSaving] = useState(false)
+  const [recordingModifier, setRecordingModifier] = useState(false)
   const writable = snap.writable
   const toggle = useCallback(async (field: 'openLinksInEditor' | 'reorderViewTabs', checked: boolean): Promise<void> => {
     if (!writable || saving) return
@@ -38,6 +39,16 @@ export function ExplorerSettingsCard(props: ExplorerSettingsCardProps): ReactEle
       await scope.set(field, checked)
     } finally {
       setSaving(false)
+    }
+  }, [saving, scope, writable])
+  const saveModifier = useCallback(async (modifier: FileExplorerSettings['viewTabModifier']): Promise<void> => {
+    if (!writable || saving) return
+    setSaving(true)
+    try {
+      await scope.set('viewTabModifier', modifier)
+    } finally {
+      setSaving(false)
+      setRecordingModifier(false)
     }
   }, [saving, scope, writable])
 
@@ -50,6 +61,34 @@ export function ExplorerSettingsCard(props: ExplorerSettingsCardProps): ReactEle
   return (
     <div className={css.body}>
       {!writable ? <p className={css.readOnly} role="status">{t('readOnly')}</p> : null}
+      <div className={css.field}>
+        <span className={css.label}>{t('settingsViewTabShortcut')}</span>
+        <button
+          type="button"
+          className={css.textInput}
+          disabled={!writable || saving}
+          aria-label={recordingModifier ? t('settingsViewTabShortcutRecord') : t('settingsViewTabShortcut')}
+          onClick={() => setRecordingModifier(true)}
+          onKeyDown={(event) => {
+            if (!recordingModifier) return
+            if (!['Alt', 'Control', 'Meta', 'Shift'].includes(event.key)) return
+            const modifier = event.shiftKey && event.altKey && !event.ctrlKey && !event.metaKey ? 'alt-shift'
+              : event.shiftKey && event.ctrlKey && !event.altKey && !event.metaKey ? 'control-shift'
+                : event.shiftKey && event.metaKey && !event.altKey && !event.ctrlKey ? 'meta-shift' : null
+            if (modifier === null) return
+            event.preventDefault()
+            void saveModifier(modifier)
+          }}
+        >
+          {recordingModifier ? t('settingsViewTabShortcutRecord') : (
+            value.viewTabModifier === 'alt-shift' && /mac|iphone|ipad/iu.test(navigator.platform)
+              ? '⌥ Option + ⇧ Shift'
+              : value.viewTabModifier === 'meta-shift' ? '⌘ Command + ⇧ Shift'
+                : value.viewTabModifier === 'control-shift' ? '⌃ Control + ⇧ Shift' : 'Alt + Shift'
+          )}
+        </button>
+        <p className={css.hint}>{t('settingsViewTabShortcutHint')}</p>
+      </div>
       <div className={css.field}>
         <label className={writable ? css.row : `${css.row} ${css.rowDisabled}`}>
           <input

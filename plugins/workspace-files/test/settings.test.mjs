@@ -12,6 +12,7 @@ test('Host volatile settings schema survives DSH form serialization and client r
   const value = {
     openLinksInEditor: true,
     reorderViewTabs: false,
+    viewTabModifier: 'alt-shift',
     viewTabOrder: [],
     favoriteFiles: [{ workspaceRoot: '/workspace/demo', path: 'docs/readme.md' }],
   }
@@ -44,7 +45,8 @@ test('intercepts conversation file links by default', () => {
   assert.equal(name, FILE_EXPLORER_SETTINGS_NS)
   assert.equal(DEFAULT_FILE_EXPLORER_SETTINGS.openLinksInEditor, true)
   assert.equal(DEFAULT_FILE_EXPLORER_SETTINGS.reorderViewTabs, false)
+  assert.equal(DEFAULT_FILE_EXPLORER_SETTINGS.viewTabModifier, 'alt-shift')
   assert.deepEqual(DEFAULT_FILE_EXPLORER_SETTINGS.viewTabOrder, [])
   assert.deepEqual(DEFAULT_FILE_EXPLORER_SETTINGS.favoriteFiles, [])
-  assert.deepEqual(Object.keys(Config.dict ?? {}).sort(), ['favoriteFiles', 'openLinksInEditor', 'reorderViewTabs', 'viewTabOrder'])
+  assert.deepEqual(Object.keys(Config.dict ?? {}).sort(), ['favoriteFiles', 'openLinksInEditor', 'reorderViewTabs', 'viewTabModifier', 'viewTabOrder'])
 })
